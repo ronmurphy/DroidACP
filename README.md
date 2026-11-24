@@ -98,13 +98,16 @@ What to know:
 
 ## Connect an agent on a computer
 
-On the computer that has your code (Node.js 18+):
+On the computer that has your code (Node.js 18+), from the top of a DroidACP
+checkout:
 
 ```sh
-cd DroidACP/bridge
-node acp-bridge.js --cwd ~/code/myapp -- npx -y @agentclientprotocol/claude-agent-acp
+git clone https://github.com/ronmurphy/DroidACP
+cd DroidACP
+node bridge/acp-bridge.js --cwd ~/code/myapp -- npx -y @agentclientprotocol/claude-agent-acp
 ```
 
+`--cwd` is the project the agent works on (`.` for the DroidACP checkout itself).
 It prints something like:
 
 ```
@@ -113,8 +116,9 @@ It prints something like:
   token:   Zx8kQ...
 ```
 
-In the app, tap **Add agent**, then enter that address, the token, and the
-project folder (an absolute path on that computer). Tap the agent to connect.
+In the app, tap **Add agent**, choose **On a computer (bridge)**, then enter that
+address, the token, and the project folder (an absolute path on that computer). Tap
+the agent to connect. With Tailscale, use the `100.x` address it lists.
 
 Other agents: put a different command after `--`:
 
@@ -123,7 +127,7 @@ Other agents: put a different command after `--`:
 | Claude Code | `npx -y @agentclientprotocol/claude-agent-acp` |
 | Codex | `npx -y @agentclientprotocol/codex-acp` |
 | Gemini CLI | `gemini --acp` |
-| Fake agent for testing | `node mock-agent.js` (in `bridge/`) |
+| Fake agent for testing | `node bridge/mock-agent.js` |
 
 Sign in to the agent on that computer first (e.g. run `claude` once and `/login`).
 To reach your computer from outside your home network, use something like

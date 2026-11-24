@@ -5,7 +5,9 @@ another computer. `acp-bridge.js` runs next to the agent and exposes it over a
 **WebSocket** (one JSON-RPC message per text frame — the same framing as the
 official ACP SDK's WebSocket transport).
 
-It is a single file with **no dependencies** — just Node.js 18 or newer.
+It is a single file with **no dependencies** — just Node.js 18 or newer. The
+commands below are run from this `bridge/` folder; from the top of the repository,
+write `bridge/acp-bridge.js` (and `bridge/mock-agent.js`) instead.
 
 ```sh
 # Claude Code

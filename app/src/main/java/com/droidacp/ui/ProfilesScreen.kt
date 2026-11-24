@@ -224,19 +224,20 @@ fun SetupHelp() {
                 "running on a computer. You start a small bridge next to the agent and connect to it from here.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        Text("1. On the computer (or in Termux), with Node.js installed:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        Text("1. On the computer (or in Termux), with Node.js installed, from the DroidACP folder:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         SelectionContainer {
-            CodeBlock("node acp-bridge.js --cwd ~/myproject -- npx -y @agentclientprotocol/claude-agent-acp", "shell")
+            CodeBlock("node bridge/acp-bridge.js --cwd ~/myproject -- npx -y @agentclientprotocol/claude-agent-acp", "shell")
         }
         Text(
-            "acp-bridge.js is in the bridge/ folder of the DroidACP repository. It prints an address like " +
-                "ws://192.168.1.20:8765 and a token.",
+            "Get the DroidACP folder with `git clone https://github.com/ronmurphy/DroidACP`. --cwd is the project " +
+                "the agent works on. The bridge prints addresses like ws://192.168.1.20:8765 and a token. " +
+                "With Tailscale, use the 100.x address. Sign in to the agent on the computer first (for Claude Code, run `claude` once).",
             style = MaterialTheme.typography.bodyMedium,
         )
         Text("2. Here, tap Add agent and enter that address, the token, and the project folder.", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         Text(
             "Other agents: replace the part after -- with e.g. `npx -y @agentclientprotocol/codex-acp` or `gemini --acp`. " +
-                "To try the app without an agent, use `node mock-agent.js`.",
+                "To try the app without an agent, use `node bridge/mock-agent.js`.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
