@@ -13,6 +13,8 @@
 -dontwarn org.w3c.dom.bootstrap.**
 -dontwarn javax.xml.stream.**
 -dontwarn javax.annotation.**
+# A build-time-only annotation in OpenTelemetry, a library the SDK depends on.
+-dontwarn com.google.auto.value.**
 
 # Keep line numbers so crash stack traces are readable.
 -keepattributes SourceFile,LineNumberTable
