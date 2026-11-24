@@ -154,7 +154,7 @@ To reach your computer from outside your home network, use something like
 - **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles)
 - **Slash commands**: type `/` to see what the agent offers
 - **Images**: attach photos or screenshots when the agent supports them
-- **Session history**: list and reopen earlier sessions (`session/list`, `session/load`)
+- **Session history**: tapping an agent continues your last conversation, replayed by the agent (`session/load`); start a new one from the agent's ⋮ menu or the chat menu, or reopen older ones from the history list (`session/list`)
 - **Reconnect** after a dropped connection, continuing the session (`session/resume` / `session/load`)
 - **Stays connected in the background** (foreground service), and notifies you when
   the agent finishes or needs permission while you're in another app

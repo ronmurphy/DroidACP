@@ -138,8 +138,15 @@ fun ProfilesScreen(
                             profile = profile,
                             state = if (active) state else null,
                             hasLastSession = hasLastSession(profile),
-                            onClick = { if (active && state.status !is ConnectionStatus.Failed) onOpenChat() else onConnect(profile) },
-                            onResume = { onResume(profile) },
+                            // A tap picks up the last conversation (the agent replays it); "New session" is in the menu.
+                            onClick = {
+                                when {
+                                    active && state.status !is ConnectionStatus.Failed -> onOpenChat()
+                                    hasLastSession(profile) -> onResume(profile)
+                                    else -> onConnect(profile)
+                                }
+                            },
+                            onNewSession = { onConnect(profile) },
                             onEdit = { onEdit(profile) },
                         )
                     }
@@ -163,7 +170,7 @@ private fun ProfileCard(
     state: ChatState?,
     hasLastSession: Boolean,
     onClick: () -> Unit,
-    onResume: () -> Unit,
+    onNewSession: () -> Unit,
     onEdit: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -193,7 +200,7 @@ private fun ProfileCard(
                 IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Options") }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     if (hasLastSession) {
-                        DropdownMenuItem(text = { Text("Continue last session") }, onClick = { menuOpen = false; onResume() })
+                        DropdownMenuItem(text = { Text("Start a new session") }, onClick = { menuOpen = false; onNewSession() })
                     }
                     DropdownMenuItem(
                         text = { Text("Edit") },

@@ -85,7 +85,7 @@ class MainActivity : ComponentActivity() {
         if (status is ConnectionStatus.Disconnected || status is ConnectionStatus.Failed) {
             // Nothing connected: reconnect to the agent used last time, if any.
             val last = app.profiles.get(app.profiles.lastProfileId) ?: return
-            connect(last, resume = null)
+            connect(last, resume = app.profiles.lastSessionId(last.id))
         }
         openChatRequests.intValue++
         if (intent.getBooleanExtra(EXTRA_FOCUS_INPUT, false)) focusRequests.intValue++
