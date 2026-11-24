@@ -1,0 +1,37 @@
+# One-off: delete the old releases tagged build-N (they list out of order on
+# GitHub), together with their tags. Releases are now tagged vX.Y.Z. Run it by
+# hand from the Actions tab; it changes nothing on its own.
+name: Clean up old releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: Delete releases whose tag starts with this
+        default: build-
+        required: true
+
+permissions:
+  contents: write # needed to delete releases and tags
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete matching releases and their tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ inputs.prefix }}
+        run: |
+          set -eu
+          # Never touch the release GitHub currently shows as "Latest".
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          echo "Latest release: $latest (kept)"
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' |
+            while read -r tag; do
+              case "$tag" in
+                "$latest") echo "keep   $tag" ;;
+                "$PREFIX"*) echo "delete $tag"; gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag ;;
+                *) echo "keep   $tag" ;;
+              esac
+            done
