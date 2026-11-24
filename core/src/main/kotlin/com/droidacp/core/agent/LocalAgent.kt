@@ -1,6 +1,5 @@
 package com.droidacp.core.agent
 
-import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
 import com.droidacp.core.rpc.JsonRpcConnection
 import com.droidacp.core.rpc.RpcErrorCodes
@@ -11,14 +10,9 @@ import com.droidacp.core.rpc.str
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -32,7 +26,6 @@ import kotlinx.serialization.json.putJsonObject
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** What the built-in agent needs from the app it lives in. */
 class LocalAgentConfig(
@@ -66,7 +59,7 @@ class LocalAgent(
     private val config: LocalAgentConfig,
     private val apiKey: String,
     send: (String) -> Boolean,
-) : ClientPort {
+) : ClientPort, InProcessAgent {
     // JsonRpcConnection is symmetric, so the class the client uses works for the agent too.
     private val rpc = JsonRpcConnection(scope, send, ::handleRequest, ::handleNotification)
     private val store = SessionStore(config.sessionsDir)
@@ -77,9 +70,9 @@ class LocalAgent(
     /** The turn currently running in each session, so `session/cancel` can stop it. */
     private val turns = ConcurrentHashMap<String, Deferred<String>>()
 
-    fun receive(text: String) = rpc.receive(text)
+    override fun receive(text: String) = rpc.receive(text)
 
-    fun close() {
+    override fun close() {
         rpc.close("Agent stopped")
         (model as? AutoCloseable)?.close()
     }
@@ -324,41 +317,6 @@ class LocalAgent(
     }
 }
 
-/**
- * Connects the app to a [LocalAgent] in the same process.
- *
- * It behaves like a network socket without the network: each direction is a queue
- * (a coroutine [Channel]) with one coroutine delivering messages in order. Using
- * queues rather than calling the other side directly means a sender never waits for
- * the receiver, exactly as with a real connection.
- */
-class LocalTransport(
-    private val listener: TransportListener,
-    config: LocalAgentConfig,
-    apiKey: String,
-) : Transport {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val toAgent = Channel<String>(Channel.UNLIMITED)
-    private val toClient = Channel<String>(Channel.UNLIMITED)
-    private val finished = AtomicBoolean(false)
-    private val agent = LocalAgent(scope, config, apiKey) { text -> toClient.trySend(text).isSuccess }
-
-    override fun connect() {
-        scope.launch {
-            listener.onOpen()
-            for (text in toClient) listener.onMessage(text)
-        }
-        scope.launch {
-            for (text in toAgent) agent.receive(text)
-        }
-    }
-
-    override fun send(text: String): Boolean = !finished.get() && toAgent.trySend(text).isSuccess
-
-    override fun close() {
-        if (!finished.compareAndSet(false, true)) return
-        agent.close()
-        scope.cancel() // stops a running turn, including its HTTP request and any shell command
-        listener.onClosed("Disconnected", null)
-    }
-}
+/** The built-in agent, reached through an [InProcessTransport]. */
+class LocalTransport(listener: TransportListener, config: LocalAgentConfig, apiKey: String) :
+    InProcessTransport(listener, { scope, send -> LocalAgent(scope, config, apiKey, send) })

@@ -12,6 +12,7 @@ import com.droidacp.core.rpc.bool
 import com.droidacp.core.rpc.objects
 import com.droidacp.core.rpc.str
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -72,7 +73,8 @@ class LocalAgentTest {
     }
 
     private suspend fun AgentController.promptAndWait(text: String): ChatState {
-        val finished = scope.launch { events.first { it is AgentEvent.TurnFinished } }
+        // UNDISPATCHED: start listening right now, before the prompt is sent, so a fast reply can't slip past.
+        val finished = scope.launch(start = CoroutineStart.UNDISPATCHED) { events.first { it is AgentEvent.TurnFinished } }
         assertTrue(sendPrompt(text))
         finished.join()
         return state.first { !it.busy }

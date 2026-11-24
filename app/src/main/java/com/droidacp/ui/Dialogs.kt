@@ -44,6 +44,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.acp.ToolCall
+import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.PendingPermission
 
@@ -160,7 +161,7 @@ fun SessionSettingsSheet(state: ChatState, actions: ChatActions, onDismiss: () -
             SelectionContainer {
                 Column {
                     InfoLine("Agent", listOfNotNull(state.agent?.displayName, state.agent?.version).joinToString(" "))
-                    InfoLine(if (state.profile?.isLocal == true) "Runs" else "Bridge", state.profile?.address ?: "")
+                    InfoLine(if (state.profile?.kind == ProfileKind.Bridge) "Bridge" else "Runs", state.profile?.address ?: "")
                     InfoLine("Folder", state.profile?.cwd ?: "")
                     InfoLine("Session", state.sessionId ?: "")
                 }

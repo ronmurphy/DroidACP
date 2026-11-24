@@ -9,8 +9,11 @@ import com.droidacp.core.acp.WebSocketTransport
 import com.droidacp.core.agent.LocalAgentConfig
 import com.droidacp.core.agent.LocalTransport
 import com.droidacp.core.chat.AgentController
+import com.droidacp.core.cloud.CloudAgentConfig
+import com.droidacp.core.cloud.CloudTransport
 import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ConnectionStatus
+import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.TransportFactory
 import com.droidacp.data.ProfileStore
 import com.droidacp.service.AgentService
@@ -53,8 +56,8 @@ class DroidAcpApp : Application() {
     }
 
     /**
-     * Decides how to reach an agent: bridge agents over a WebSocket, the built-in
-     * agent through an in-memory pipe inside this process.
+     * Decides how to reach an agent: bridge agents over a WebSocket; the built-in
+     * agent and cloud mode through an in-memory pipe inside this process.
      */
     private fun transportFactory(): TransportFactory {
         val http = WebSocketTransport.defaultClient()
@@ -66,11 +69,12 @@ class DroidAcpApp : Application() {
             // Shell commands run as this app; give them somewhere of their own for HOME and temp files.
             shellEnv = mapOf("HOME" to home.path, "TMPDIR" to cacheDir.path),
         )
+        val cloudAgent = CloudAgentConfig(stateDir = File(filesDir, "agent-cloud"), version = BuildConfig.VERSION_NAME)
         return TransportFactory { profile, listener ->
-            if (profile.isLocal) {
-                LocalTransport(listener, localAgent, profile.apiKey)
-            } else {
-                WebSocketTransport(http, profile.url, profile.token, listener)
+            when (profile.kind) {
+                ProfileKind.Local -> LocalTransport(listener, localAgent, profile.apiKey)
+                ProfileKind.Cloud -> CloudTransport(listener, cloudAgent, profile.apiKey, profile.repoUrl, profile.repoToken)
+                ProfileKind.Bridge -> WebSocketTransport(http, profile.url, profile.token, listener)
             }
         }
     }

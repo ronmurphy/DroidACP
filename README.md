@@ -3,10 +3,12 @@
 An Android client for the **[Agent Client Protocol](https://agentclientprotocol.com)** (ACP):
 chat with coding agents from an Android tablet or phone, with a home-screen widget.
 
-It can talk to two kinds of agent:
+It can talk to three kinds of agent:
 
 - **On this device**: a coding agent built into the app. It calls Claude with your own
   Anthropic API key and works on a folder on the device. No computer needed.
+- **Cloud**: the agent runs in a Linux container hosted by Anthropic, with a real
+  shell, git and package managers. Also needs only an API key.
 - **On a computer**: Claude Code, Codex, Gemini CLI or any other ACP agent, reached
   through a small bridge.
 
@@ -68,6 +70,31 @@ Limits, compared with Claude Code on a computer:
   package manager, Python or Node unless the device has them.
 - No MCP servers, subagents, hooks or automatic context compaction yet.
 - The API key is the only sign-in; a Claude subscription login is not supported.
+
+## Run the agent in the cloud
+
+Cloud mode uses [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview)
+(a beta service): Anthropic runs the agent and gives each session its own Linux
+container. The app sends your messages and shows what comes back.
+
+1. In the app, tap **Add agent**, choose **Cloud**, and enter a name and your Anthropic API key.
+2. Optional: a GitHub repository address and a GitHub access token. The repository is
+   cloned into the container at the start of each session. A fine-grained token with
+   *Contents: Read* lets the agent clone; *Read and write* also lets it push.
+3. Tap the agent to start.
+
+What to know:
+
+- The container has bash, git, compilers you install, and open internet access.
+- Modes: **Auto** (Anthropic's server checks each action; safe ones run, risky ones ask
+  or are blocked), **Ask first** (ask before commands and file changes), **Don't ask**.
+- Model, effort and web search are chosen under options and apply to the next new session.
+- Conversations are stored on Anthropic's side, so you can close the app mid-task and
+  reopen the session later from the history list.
+- The first session creates an agent and an environment named "DroidACP" in your
+  Anthropic account; they are reused afterwards. You can see sessions, with full
+  traces and cost, in the Anthropic Console.
+- Billed to your API key: tokens, plus container time and web searches.
 
 ## Connect an agent on a computer
 
@@ -142,14 +169,23 @@ without anything Android-specific:
 
 | File | What it does |
 | --- | --- |
-| `LocalAgent.kt` | The agent's half of ACP (`initialize`, `session/new`, `session/prompt`, ...) and `LocalTransport`, the in-memory pipe to the app |
+| `LocalAgent.kt` | The agent's half of ACP (`initialize`, `session/new`, `session/prompt`, ...) |
+| `InProcessTransport.kt` | The in-memory pipe between the app and an agent inside it |
 | `AgentSession.kt` | The agent loop: send the conversation to Claude, run the tools it asks for, repeat |
 | `ModelClient.kt`, `AnthropicModelClient.kt` | A small "model" interface, and its implementation on Anthropic's official Java SDK (the only file that uses the SDK) |
 | `Tool.kt`, `FileTools.kt`, `SearchTools.kt`, `ShellTool.kt` | The tools, each a small class with a JSON schema |
 | `Permissions.kt` | Which tool calls run, which ask first, which are refused, per mode |
 | `SystemPrompt.kt`, `SessionStore.kt` | The instructions the model gets; saving and reloading sessions |
 
-The agent's tests (`core/src/test/.../agent/`) run the real app-side client against the
+**`core/.../cloud/`: cloud mode**
+
+| File | What it does |
+| --- | --- |
+| `CloudAgent.kt` | The agent's half of ACP, where every request becomes a Managed Agents call; reconnects a dropped stream |
+| `CloudEvents.kt` | Translates cloud session events into ACP updates for the chat screen |
+| `CloudApi.kt`, `AnthropicCloudApi.kt` | The few API calls needed, and their implementation on the Anthropic SDK |
+
+The agent's tests (`core/src/test/.../agent/`, `.../cloud/`) run the real app-side client against the
 real agent with a scripted fake model, and the SDK adapter against a local fake API server.
 
 **`app/`: the Android app**
@@ -198,6 +234,9 @@ DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :c
   With "All files access" granted that is all of shared storage, not just the project
   folder. Edits outside the project folder always ask first, and in **Don't ask** mode
   nothing asks, so use that mode with care.
+- **Cloud agent:** its container has open internet access and holds whatever
+  repository you attach, so treat it like a development machine, not a vault. The
+  GitHub token is kept on Anthropic's side and never enters the container.
 - Saved agents (addresses, tokens, API keys) are stored in the app's private storage,
   encrypted with a key held in the Android Keystore.
 - For refusals by Anthropic's safety classifiers, the built-in agent turns on the API's

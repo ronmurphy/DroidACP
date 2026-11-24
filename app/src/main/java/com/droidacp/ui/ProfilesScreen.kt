@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -203,12 +204,18 @@ private fun ProfileCard(
 @Composable
 fun SetupHelp() {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("There are two kinds of agent:", style = MaterialTheme.typography.bodyMedium)
+        Text("There are three kinds of agent:", style = MaterialTheme.typography.bodyMedium)
         Text("On this device", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         Text(
             "A coding agent built into DroidACP. It calls Claude with your own Anthropic API key and works on a " +
                 "folder on this device: reading, editing and searching files, and running shell commands. " +
                 "Nothing else to install. Tap Add agent and choose \"On this device\".",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text("Cloud", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text(
+            "The same idea, but the agent works in a Linux container hosted by Anthropic, with a real shell, git and " +
+                "package managers, and can clone a GitHub repository. Also needs only your Anthropic API key.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Text("On a computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
@@ -246,7 +253,11 @@ fun ProfileEditScreen(
 ) {
     val context = LocalContext.current
     // New agents start as "on this device"; it needs the least setup.
-    var local by rememberSaveable { mutableStateOf(initial?.isLocal ?: true) }
+    // (Kept as the kind's id, a String, because that is something rememberSaveable can save.)
+    var kindId by rememberSaveable { mutableStateOf((initial?.kind ?: ProfileKind.Local).id) }
+    val kind = ProfileKind.fromId(kindId)
+    val local = kind == ProfileKind.Local
+    val cloud = kind == ProfileKind.Cloud
     var name by rememberSaveable { mutableStateOf(initial?.name ?: "") }
     var url by rememberSaveable { mutableStateOf(initial?.url?.ifEmpty { "ws://" } ?: "ws://") }
     var token by rememberSaveable { mutableStateOf(initial?.token ?: "") }
@@ -254,6 +265,8 @@ fun ProfileEditScreen(
     // Each kind keeps its own folder text, so switching kinds doesn't lose what you typed.
     var bridgeCwd by rememberSaveable { mutableStateOf(initial?.takeIf { !it.isLocal }?.cwd ?: "") }
     var localCwd by rememberSaveable { mutableStateOf(initial?.takeIf { it.isLocal }?.cwd ?: StorageAccess.defaultFolder()) }
+    var repoUrl by rememberSaveable { mutableStateOf(initial?.repoUrl ?: "") }
+    var repoToken by rememberSaveable { mutableStateOf(initial?.repoToken ?: "") }
     var showSecret by rememberSaveable { mutableStateOf(false) }
     var triedSave by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -268,10 +281,19 @@ fun ProfileEditScreen(
     }
 
     val base = initial ?: Profile(name = "", cwd = "")
-    val draft = if (local) {
-        base.copy(name = name.trim(), kind = ProfileKind.Local, url = "", token = "", apiKey = apiKey.trim(), cwd = localCwd.trim().trimEnd('/').ifEmpty { "/" })
-    } else {
-        base.copy(name = name.trim(), kind = ProfileKind.Bridge, url = url.trim(), token = token.trim(), apiKey = "", cwd = bridgeCwd.trim())
+    val draft = when (kind) {
+        ProfileKind.Local -> base.copy(
+            name = name.trim(), kind = kind, url = "", token = "", apiKey = apiKey.trim(),
+            cwd = localCwd.trim().trimEnd('/').ifEmpty { "/" }, repoUrl = "", repoToken = "",
+        )
+        ProfileKind.Cloud -> base.copy(
+            name = name.trim(), kind = kind, url = "", token = "", apiKey = apiKey.trim(),
+            cwd = "/workspace", repoUrl = repoUrl.trim(), repoToken = repoToken.trim(),
+        )
+        ProfileKind.Bridge -> base.copy(
+            name = name.trim(), kind = kind, url = url.trim(), token = token.trim(), apiKey = "",
+            cwd = bridgeCwd.trim(), repoUrl = "", repoToken = "",
+        )
     }
     val problems = draft.validate()
 
@@ -302,19 +324,20 @@ fun ProfileEditScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = local, onClick = { local = true }, label = { Text("On this device") })
-                    FilterChip(selected = !local, onClick = { local = false }, label = { Text("On a computer (bridge)") })
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = local, onClick = { kindId = ProfileKind.Local.id }, label = { Text("On this device") })
+                    FilterChip(selected = cloud, onClick = { kindId = ProfileKind.Cloud.id }, label = { Text("Cloud") })
+                    FilterChip(selected = kind == ProfileKind.Bridge, onClick = { kindId = ProfileKind.Bridge.id }, label = { Text("On a computer (bridge)") })
                 }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Name") },
-                    placeholder = { Text(if (local) "Claude on this tablet" else "Claude on my desktop") },
+                    placeholder = { Text(if (local) "Claude on this tablet" else if (cloud) "Claude in the cloud" else "Claude on my desktop") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (local) {
+                if (local || cloud) {
                     OutlinedTextField(
                         value = apiKey,
                         onValueChange = { apiKey = it },
@@ -327,6 +350,30 @@ fun ProfileEditScreen(
                         trailingIcon = { TextButton(onClick = { showSecret = !showSecret }) { Text(if (showSecret) "Hide" else "Show") } },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                if (cloud) {
+                    OutlinedTextField(
+                        value = repoUrl,
+                        onValueChange = { repoUrl = it },
+                        label = { Text("GitHub repository (optional)") },
+                        placeholder = { Text("https://github.com/you/project") },
+                        supportingText = { Text("Cloned into the agent's container at the start of each session. Leave empty for an empty workspace.") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = repoToken,
+                        onValueChange = { repoToken = it },
+                        label = { Text("GitHub access token") },
+                        supportingText = { Text("Needed with a repository. A fine-grained token with Contents: Read lets the agent clone; Read and write also lets it push.") },
+                        singleLine = true,
+                        visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (local) {
                     OutlinedTextField(
                         value = localCwd,
                         onValueChange = { localCwd = it },
@@ -350,7 +397,8 @@ fun ProfileEditScreen(
                             }
                         }
                     }
-                } else {
+                }
+                if (kind == ProfileKind.Bridge) {
                     OutlinedTextField(
                         value = url,
                         onValueChange = { url = it },
@@ -398,6 +446,10 @@ fun ProfileEditScreen(
                     if (local) {
                         "The agent has no git, compilers or package managers unless this device provides them: Android's " +
                             "own shell only has basic commands. Pick the model, effort and permission mode from the chat screen."
+                    } else if (cloud) {
+                        "The agent runs in a Linux container hosted by Anthropic (Claude Managed Agents, a beta service), with a " +
+                            "real shell, git and package managers. Each session gets a fresh container; the conversation is kept " +
+                            "on Anthropic's side. Billed to your API key: tokens plus a small charge for container time."
                     } else {
                         "Tip: Tailscale or a VPN lets you reach a computer at home from anywhere. " +
                             "Running the bridge in Termux on this tablet works too — use ws://127.0.0.1:8765."
