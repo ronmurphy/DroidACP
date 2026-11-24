@@ -1,0 +1,72 @@
+# Builds the APK on every push and publishes it as a GitHub Release, so you can
+# install new versions straight from your tablet: open the repo's Releases page,
+# tap the newest DroidACP-*.apk, and install.
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to create releases
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests (protocol core)
+        run: ./gradlew --no-daemon :core:test
+
+      - name: End-to-end test (Kotlin client -> acp-bridge.js -> mock-agent.js)
+        run: |
+          node bridge/acp-bridge.js --port 18765 --token ci-token -- node bridge/mock-agent.js > bridge.log 2>&1 &
+          sleep 2
+          DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=ci-token \
+            ./gradlew --no-daemon :core:test --tests '*BridgeIntegrationTest*' --rerun-tasks
+          cat bridge.log
+
+      - name: Build release APK
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Name the APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/DroidACP-0.1.${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DroidACP-0.1.${{ github.run_number }}
+          path: dist/*.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: DroidACP 0.1.${{ github.run_number }} (${{ github.ref_name }})
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.ref_name != github.event.repository.default_branch }}
+          files: dist/*.apk
+          body: |
+            Built from `${{ github.ref_name }}` @ ${{ github.sha }}.
+
+            **Install on Android:** tap the `.apk` below, then open it. The first time,
+            Android asks you to allow installs from your browser.
+            Newer builds install over older ones (same signing key).

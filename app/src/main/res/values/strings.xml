@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DroidACP</string>
+    <string name="widget_name">DroidACP agent</string>
+    <string name="widget_description">Shows what your agent is doing. Tap Ask to send a message.</string>
+    <string name="widget_ask">Ask</string>
+    <string name="widget_default_title">DroidACP</string>
+    <string name="widget_default_body">No agent connected. Tap to open.</string>
+    <string name="channel_connection">Agent connection</string>
+    <string name="channel_connection_desc">Shown while an agent is connected so Android keeps the connection alive.</string>
+    <string name="channel_events">Agent updates</string>
+    <string name="channel_events_desc">When the agent finishes, needs permission, or disconnects while you are in another app.</string>
+</resources>
