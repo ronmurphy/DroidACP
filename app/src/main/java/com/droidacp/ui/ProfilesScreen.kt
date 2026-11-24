@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -57,7 +58,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -65,6 +68,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.droidacp.core.acp.BridgeCommand
+import com.droidacp.core.acp.BridgeFolders
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
@@ -248,6 +253,9 @@ fun SetupHelp() {
 @Composable
 fun ProfileEditScreen(
     initial: Profile?,
+    recentFolders: (ProfileKind) -> List<String>,
+    onForgetFolder: (ProfileKind, String) -> Unit,
+    bridgeFolders: BridgeFolders,
     onSave: (Profile) -> Unit,
     onDelete: (Profile) -> Unit,
     onBack: () -> Unit,
@@ -264,8 +272,14 @@ fun ProfileEditScreen(
     var token by rememberSaveable { mutableStateOf(initial?.token ?: "") }
     var apiKey by rememberSaveable { mutableStateOf(initial?.apiKey ?: "") }
     // Each kind keeps its own folder text, so switching kinds doesn't lose what you typed.
-    var bridgeCwd by rememberSaveable { mutableStateOf(initial?.takeIf { !it.isLocal }?.cwd ?: "") }
-    var localCwd by rememberSaveable { mutableStateOf(initial?.takeIf { it.isLocal }?.cwd ?: StorageAccess.defaultFolder()) }
+    // A new agent starts in the folder used most recently, so you rarely have to type it.
+    var bridgeCwd by rememberSaveable {
+        mutableStateOf(initial?.takeIf { it.kind == ProfileKind.Bridge }?.cwd ?: recentFolders(ProfileKind.Bridge).firstOrNull() ?: "")
+    }
+    var localCwd by rememberSaveable {
+        mutableStateOf(initial?.takeIf { it.isLocal }?.cwd ?: recentFolders(ProfileKind.Local).firstOrNull() ?: StorageAccess.defaultFolder())
+    }
+    var browsing by remember { mutableStateOf(false) }
     var repoUrl by rememberSaveable { mutableStateOf(initial?.repoUrl ?: "") }
     var repoToken by rememberSaveable { mutableStateOf(initial?.repoToken ?: "") }
     var showSecret by rememberSaveable { mutableStateOf(false) }
@@ -375,14 +389,13 @@ fun ProfileEditScreen(
                     )
                 }
                 if (local) {
-                    OutlinedTextField(
+                    FolderField(
                         value = localCwd,
                         onValueChange = { localCwd = it },
-                        label = { Text("Project folder on this device") },
-                        supportingText = { Text("Absolute path. The agent reads, edits and runs commands here. It is created if it doesn't exist.") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-                        modifier = Modifier.fillMaxWidth(),
+                        label = "Project folder on this device",
+                        supportingText = "Absolute path. The agent reads, edits and runs commands here. It is created if it doesn't exist.",
+                        recent = recentFolders(ProfileKind.Local),
+                        onForget = { onForgetFolder(ProfileKind.Local, it) },
                     )
                     if (!storageGranted && StorageAccess.isNeededFor(context, localCwd.trim())) {
                         ElevatedCard(Modifier.fillMaxWidth()) {
@@ -421,16 +434,20 @@ fun ProfileEditScreen(
                         trailingIcon = { TextButton(onClick = { showSecret = !showSecret }) { Text(if (showSecret) "Hide" else "Show") } },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    FolderField(
                         value = bridgeCwd,
                         onValueChange = { bridgeCwd = it },
-                        label = { Text("Project folder on the agent's computer") },
-                        placeholder = { Text("/home/me/projects/my-app") },
-                        supportingText = { Text("Absolute path. The agent reads and edits files here.") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-                        modifier = Modifier.fillMaxWidth(),
+                        label = "Project folder on the agent's computer",
+                        placeholder = "/home/me/projects/my-app",
+                        supportingText = "Absolute path. The agent reads and edits files here. Type it, pick one you used before, or browse.",
+                        recent = recentFolders(ProfileKind.Bridge),
+                        onForget = { onForgetFolder(ProfileKind.Bridge, it) },
                     )
+                    val canBrowse = url.trim().let { it.startsWith("ws://") || it.startsWith("wss://") } && url.trim().length > 6
+                    OutlinedButton(onClick = { browsing = true }, enabled = canBrowse) {
+                        Text(if (canBrowse) "Browse the computer's folders…" else "Browse (enter the address first)")
+                    }
+                    BridgeSetupCard(folder = bridgeCwd.trim())
                 }
                 if (triedSave) {
                     for (problem in problems) Text("• $problem", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -462,6 +479,20 @@ fun ProfileEditScreen(
         }
     }
 
+    if (browsing) {
+        BridgeFolderDialog(
+            folders = bridgeFolders,
+            bridgeUrl = url,
+            token = token,
+            start = bridgeCwd.trim().ifEmpty { null },
+            onPick = { path, _ ->
+                bridgeCwd = path
+                browsing = false
+            },
+            onDismiss = { browsing = false },
+        )
+    }
+
     if (confirmDelete && initial != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -470,5 +501,39 @@ fun ProfileEditScreen(
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete(initial) }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/**
+ * Bridge mode needs a few things outside this app: the bridge running on the
+ * computer, and usually Tailscale (to reach it) and Termux (to start it over SSH).
+ * This card gathers the shortcuts in one place.
+ */
+@Composable
+private fun BridgeSetupCard(folder: String) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val command = BridgeCommand.forFolder(folder)
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Start the bridge on the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Run this in the DroidACP folder on the computer: over SSH from Termux, or at the computer itself.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SelectionContainer { CodeBlock(command, "shell") }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    clipboard.setText(AnnotatedString(command))
+                    android.widget.Toast.makeText(context, "Command copied", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("Copy command") }
+                for (app in HelperApp.entries) {
+                    // Checked when the screen opens: "Get" becomes "Open" next time after installing.
+                    val installed = remember(app) { app.isInstalled(context) }
+                    OutlinedButton(onClick = { app.open(context) }) { Text(if (installed) "Open ${app.label}" else "Get ${app.label}") }
+                }
+            }
+        }
     }
 }

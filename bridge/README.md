@@ -48,6 +48,12 @@ stays the same between runs. Override it with `--token` or `ACP_BRIDGE_TOKEN`.
 | `--max-clients 4` | Simultaneous connections (each gets its own agent process) |
 | `-v`, `--verbose` | Print every JSON-RPC message — a great way to learn ACP |
 
+## Folder browsing
+
+The app's folder picker asks the bridge `GET /droidacp/folders?path=<folder>` (with the
+same token) and gets back the folder names in it, plus your home folder. Hidden
+folders are left out, and no file contents are ever sent.
+
 ## Security
 
 Whoever can connect can make the agent read, edit and run things on that computer.

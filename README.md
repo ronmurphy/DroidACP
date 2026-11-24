@@ -120,6 +120,17 @@ In the app, tap **Add agent**, choose **On a computer (bridge)**, then enter tha
 address, the token, and the project folder (an absolute path on that computer). Tap
 the agent to connect. With Tailscale, use the `100.x` address it lists.
 
+The add-agent screen helps with this:
+
+- **Browse the computer's folders**: once the address and token are in, pick the
+  project folder from a list instead of typing it. (The bridge answers with folder
+  names only, and only with the right token.)
+- **Folders used before**: the arrow in the folder field lists them; a new agent
+  starts with the one you used last.
+- **Copy command**, **Open Termux**, **Open Tailscale**: the command above with your
+  folder filled in, and the apps you need to start the bridge over SSH and reach the
+  computer. Missing apps open their download page instead.
+
 Other agents: put a different command after `--`:
 
 | Agent | Command after `--` |

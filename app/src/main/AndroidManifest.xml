@@ -20,6 +20,15 @@
         usesCleartextTraffic: the bridge usually runs as plain ws:// on your own
         network (LAN, Tailscale, or Termux on this tablet), so allow non-TLS sockets.
     -->
+    <!--
+        Android 11+ hides other apps unless we say which ones we look for. These are
+        the helpers for bridge mode, opened from the "Add agent" screen.
+    -->
+    <queries>
+        <package android:name="com.termux" />
+        <package android:name="com.tailscale.ipn" />
+    </queries>
+
     <application
         android:name=".DroidAcpApp"
         android:allowBackup="false"

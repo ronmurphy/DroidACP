@@ -1,5 +1,8 @@
 package com.droidacp.core
 
+import com.droidacp.core.acp.BridgeFolderException
+import com.droidacp.core.acp.BridgeFolders
+import com.droidacp.core.acp.WebSocketTransport
 import com.droidacp.core.chat.AgentController
 import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ChatItem
@@ -90,6 +93,37 @@ class BridgeIntegrationTest {
             }
         } finally {
             scope.cancel()
+        }
+    }
+
+    @Test
+    fun listsFoldersOnTheBridgeComputer() {
+        val url = System.getenv("DROIDACP_BRIDGE_URL") ?: return
+        val token = System.getenv("DROIDACP_BRIDGE_TOKEN") ?: ""
+        val folders = BridgeFolders(WebSocketTransport.defaultClient())
+        runBlocking {
+            // No path: the home folder.
+            val home = folders.list(url, token, null)
+            assertEquals(home.home, home.path)
+
+            // A folder we make, with a hidden one inside that must not be listed.
+            val dir = java.nio.file.Files.createTempDirectory("droidacp-browse").toFile()
+            try {
+                java.io.File(dir, "src").mkdir()
+                java.io.File(dir, ".git").mkdir()
+                java.io.File(dir, "notes.txt").writeText("x")
+                val listing = folders.list(url, token, dir.path)
+                assertEquals(listOf("src"), listing.folders)
+                assertEquals(dir.parent, listing.parent)
+                assertEquals(java.io.File(dir, "src").path, listing.child("src"))
+
+                val missing = runCatching { folders.list(url, token, java.io.File(dir, "nope").path) }.exceptionOrNull()
+                assertTrue(missing is BridgeFolderException && "No such folder" in missing.message!!, "got $missing")
+                val badToken = runCatching { folders.list(url, "wrong", dir.path) }.exceptionOrNull()
+                assertTrue(badToken is BridgeFolderException && "token" in badToken.message!!, "got $badToken")
+            } finally {
+                dir.deleteRecursively()
+            }
         }
     }
 }

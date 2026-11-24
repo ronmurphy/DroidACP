@@ -474,6 +474,71 @@ function sameSecret(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
+// ---------------------------------------------------------------------------
+// Folder browsing: GET /droidacp/folders?path=<folder>
+// ---------------------------------------------------------------------------
+//
+// Lets the app show a folder picker for "Project folder on the agent's computer"
+// instead of making you type the path. It needs the same token as the agent
+// connection, and only ever returns folder *names*: no file contents. (Whoever has
+// the token can already ask the agent to read any file, so this reveals nothing new.)
+//
+// The answer is JSON:
+//   { "path": "/home/brad/Documents", "parent": "/home/brad", "home": "/home/brad",
+//     "cwd": "/home/brad/Documents/DroidACP", "separator": "/", "folders": ["DroidACP", ...] }
+// Without ?path= it lists your home folder.
+
+const MAX_FOLDERS = 500;
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+function handleFolders(req, res, url, opts) {
+  if (!opts.noAuth && !sameSecret(tokenFromRequest(req), opts.token)) {
+    log(`rejected folder listing from ${req.socket.remoteAddress}: wrong or missing token`);
+    return sendJson(res, 401, { error: 'Wrong or missing token' });
+  }
+  const home = os.homedir();
+  const requested = url.searchParams.get('path');
+  const target = path.resolve(expandHome(requested && requested.trim() ? requested.trim() : home));
+
+  let entries;
+  try {
+    entries = fs.readdirSync(target, { withFileTypes: true });
+  } catch (err) {
+    const status = err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 404 : err.code === 'EACCES' || err.code === 'EPERM' ? 403 : 500;
+    const message = status === 404 ? `No such folder: ${target}` : status === 403 ? `Not allowed to open ${target}` : err.message;
+    return sendJson(res, status, { error: message, path: target });
+  }
+
+  const isFolder = (entry) => {
+    if (entry.isDirectory()) return true;
+    if (!entry.isSymbolicLink()) return false;
+    try {
+      return fs.statSync(path.join(target, entry.name)).isDirectory(); // a link to a folder counts
+    } catch {
+      return false;
+    }
+  };
+  const folders = entries
+    .filter((e) => !e.name.startsWith('.') && isFolder(e)) // hidden folders (.git, .cache, ...) are left out
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+  const parent = path.dirname(target);
+  sendJson(res, 200, {
+    path: target,
+    parent: parent === target ? null : parent, // null at the top of the drive
+    home,
+    cwd: path.resolve(opts.cwd),
+    separator: path.sep,
+    folders: folders.slice(0, MAX_FOLDERS),
+    truncated: folders.length > MAX_FOLDERS,
+  });
+}
+
 function rejectUpgrade(socket, status, message) {
   socket.end(`HTTP/1.1 ${status} ${http.STATUS_CODES[status]}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${message}\n`);
 }
@@ -483,6 +548,13 @@ function main() {
   if (!opts.noAuth && !opts.token) opts.token = loadOrCreateToken();
 
   const onRequest = (req, res) => {
+    let url;
+    try {
+      url = new URL(req.url, 'http://bridge');
+    } catch {
+      url = new URL('http://bridge/');
+    }
+    if (url.pathname === '/droidacp/folders') return handleFolders(req, res, url, opts);
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('DroidACP bridge is running. Connect to this address with a WebSocket ACP client.\n');
   };

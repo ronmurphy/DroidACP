@@ -26,6 +26,7 @@ import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ImageAttachment
 import com.droidacp.core.chat.Profile
+import com.droidacp.core.chat.ProfileKind
 import com.droidacp.service.Notifications
 import com.droidacp.ui.AndroidImageDecoder
 import com.droidacp.ui.AttachmentThumb
@@ -120,6 +121,8 @@ class MainActivity : ComponentActivity() {
         val state by controller.state.collectAsStateWithLifecycle()
         val profiles by app.profiles.profiles.collectAsStateWithLifecycle()
         val log by controller.log.collectAsStateWithLifecycle()
+        val bridgeFolderHistory by app.folders.recent(ProfileKind.Bridge).collectAsStateWithLifecycle()
+        val localFolderHistory by app.folders.recent(ProfileKind.Local).collectAsStateWithLifecycle()
 
         val startOnChat = state.status == ConnectionStatus.Connecting || state.status == ConnectionStatus.Connected
         var screen by rememberSaveable { mutableStateOf(if (startOnChat) Screen.Chat else Screen.Profiles) }
@@ -213,7 +216,17 @@ class MainActivity : ComponentActivity() {
 
             Screen.Edit -> ProfileEditScreen(
                 initial = app.profiles.get(editingId),
+                recentFolders = { kind ->
+                    when (kind) {
+                        ProfileKind.Bridge -> bridgeFolderHistory
+                        ProfileKind.Local -> localFolderHistory
+                        ProfileKind.Cloud -> emptyList()
+                    }
+                },
+                onForgetFolder = { kind, path -> app.folders.forget(kind, path) },
+                bridgeFolders = app.bridgeFolders,
                 onSave = { p ->
+                    if (p.kind != ProfileKind.Cloud) app.folders.remember(p.kind, p.cwd)
                     app.profiles.save(p)
                     screen = Screen.Profiles
                 },

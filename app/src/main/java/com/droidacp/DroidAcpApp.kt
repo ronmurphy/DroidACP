@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import com.droidacp.core.acp.BridgeFolders
 import com.droidacp.core.acp.WebSocketTransport
 import com.droidacp.core.agent.LocalAgentConfig
 import com.droidacp.core.agent.LocalTransport
@@ -15,6 +16,7 @@ import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.TransportFactory
+import com.droidacp.data.FolderHistory
 import com.droidacp.data.ProfileStore
 import com.droidacp.service.AgentService
 import com.droidacp.service.Notifications
@@ -41,6 +43,11 @@ class DroidAcpApp : Application() {
         private set
     lateinit var profiles: ProfileStore
         private set
+    lateinit var folders: FolderHistory
+        private set
+
+    /** Asks a bridge which folders its computer has, for the folder picker. */
+    val bridgeFolders by lazy { BridgeFolders(WebSocketTransport.defaultClient()) }
 
     @Volatile
     private var startedActivities = 0
@@ -50,6 +57,7 @@ class DroidAcpApp : Application() {
         super.onCreate()
         controller = AgentController(appScope, BuildConfig.VERSION_NAME, transportFactory())
         profiles = ProfileStore(this)
+        folders = FolderHistory(this)
         Notifications.createChannels(this)
         registerActivityLifecycleCallbacks(ForegroundTracker())
         watchController()

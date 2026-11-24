@@ -77,3 +77,24 @@ object ImagePreparer {
         null
     }
 }
+
+/** Another app the bridge setup may need, and where to get it if it isn't installed. */
+enum class HelperApp(val packageName: String, val label: String, val getUrl: String) {
+    // Termux on Google Play is years out of date; F-Droid has the maintained build.
+    Termux("com.termux", "Termux", "https://f-droid.org/packages/com.termux/"),
+    Tailscale("com.tailscale.ipn", "Tailscale", "https://play.google.com/store/apps/details?id=com.tailscale.ipn"),
+    ;
+
+    fun isInstalled(context: Context): Boolean = context.packageManager.getLaunchIntentForPackage(packageName) != null
+
+    /** Open the app, or its download page when it isn't installed. */
+    fun open(context: Context) {
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            ?: android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(getUrl))
+        try {
+            context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.widget.Toast.makeText(context, "Couldn't open $label", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+}
