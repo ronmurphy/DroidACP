@@ -19,6 +19,12 @@ enum class ProfileKind(val id: String) {
 
     /** In Anthropic's cloud: Claude Managed Agents runs the agent in a Linux container. */
     Cloud("cloud"),
+
+    /**
+     * The chat open in PlasmaLLM (a desktop ACP client) on a computer, reached over
+     * Tailscale. DroidACP is a second screen for it: see [com.droidacp.core.acp.PlasmaLlm].
+     */
+    PlasmaLlm("plasmallm"),
     ;
 
     companion object {
@@ -30,11 +36,13 @@ enum class ProfileKind(val id: String) {
  * A saved agent.
  *
  * @param url    Bridge agents: WebSocket address of the bridge, e.g. `ws://192.168.1.20:8765`.
+ *               PlasmaLLM: the computer's Tailscale name, e.g. `my-laptop` (see [connectUrl]).
  * @param token  Bridge agents: the bridge token (sent as `Authorization: Bearer ...`).
  * @param apiKey Built-in and cloud agents: the Anthropic API key.
  * @param cwd    Absolute path the agent works in. For a bridge agent that's a folder on
  *               the *agent's* machine; for the built-in agent it's a folder on this device;
- *               for a cloud agent it's always the container's `/workspace`.
+ *               for a cloud agent it's always the container's `/workspace`. For PlasmaLLM
+ *               it's optional: empty means "whatever folder PlasmaLLM has open".
  * @param repoUrl   Cloud agents: a GitHub repository to clone into the container (optional).
  * @param repoToken Cloud agents: a GitHub access token for that repository.
  */
@@ -51,6 +59,10 @@ data class Profile(
 ) {
     val isLocal: Boolean get() = kind == ProfileKind.Local
     val isCloud: Boolean get() = kind == ProfileKind.Cloud
+    val isPlasmaLlm: Boolean get() = kind == ProfileKind.PlasmaLlm
+
+    /** The WebSocket address to connect to (bridge and PlasmaLLM agents). */
+    val connectUrl: String get() = if (isPlasmaLlm) com.droidacp.core.acp.PlasmaLlm.url(url) else url
 
     /** One line saying where this agent lives, for lists and status text. */
     val address: String
@@ -58,6 +70,7 @@ data class Profile(
             ProfileKind.Local -> "On this device"
             ProfileKind.Cloud -> "Anthropic cloud"
             ProfileKind.Bridge -> url
+            ProfileKind.PlasmaLlm -> "PlasmaLLM on ${url.trim()}"
         }
 
     fun toJson(): JsonObject = buildJsonObject {
@@ -84,18 +97,28 @@ data class Profile(
                 if (!repoUrl.trim().startsWith("https://github.com/")) add("The repository must be a https://github.com/... address")
                 if (repoToken.isBlank()) add("A repository needs a GitHub access token")
             }
+        } else if (isPlasmaLlm) {
+            val host = url.trim()
+            if (host.isEmpty()) add("Enter the computer's Tailscale name")
+            if (host.any { it.isWhitespace() }) add("The computer's name can't contain spaces")
+            // PlasmaLLM expands a leading ~ itself.
+            if (cwd.isNotBlank() && !(isAbsolute(cwd) || cwd.startsWith("~"))) add("The folder must be an absolute path on the computer, or empty")
         } else {
             val u = url.trim().lowercase()
             if (!(u.startsWith("ws://") || u.startsWith("wss://"))) add("The address must start with ws:// or wss://")
-            if (!(cwd.startsWith("/") || Regex("^[A-Za-z]:[\\\\/].*").matches(cwd))) add("The folder must be an absolute path on the agent's computer")
+            if (!isAbsolute(cwd)) add("The folder must be an absolute path on the agent's computer")
         }
     }
+
+    /** `/home/me/x` or `C:\\x`. */
+    private fun isAbsolute(path: String): Boolean =
+        path.startsWith("/") || Regex("^[A-Za-z]:[\\\\/].*").matches(path)
 
     companion object {
         fun fromJson(o: JsonObject): Profile? {
             val kind = ProfileKind.fromId(o.str("kind"))
             val url = o.str("url") ?: ""
-            if (kind == ProfileKind.Bridge && url.isEmpty()) return null
+            if ((kind == ProfileKind.Bridge || kind == ProfileKind.PlasmaLlm) && url.isEmpty()) return null
             return Profile(
                 id = o.str("id") ?: UUID.randomUUID().toString(),
                 name = o.str("name") ?: url.ifEmpty { "Agent" },

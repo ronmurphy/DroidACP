@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.droidacp.core.acp.BridgeCommand
 import com.droidacp.core.acp.BridgeFolders
+import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
@@ -84,6 +85,7 @@ fun ProfilesScreen(
     hasLastSession: (Profile) -> Boolean,
     onConnect: (Profile) -> Unit,
     onResume: (Profile) -> Unit,
+    onStartNew: (Profile) -> Unit,
     onOpenChat: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (Profile) -> Unit,
@@ -139,6 +141,7 @@ fun ProfilesScreen(
                             state = if (active) state else null,
                             hasLastSession = hasLastSession(profile),
                             // A tap picks up the last conversation (the agent replays it); "New session" is in the menu.
+                            // PlasmaLLM: a tap joins the chat open on the computer, whatever was saved here.
                             onClick = {
                                 when {
                                     active && state.status !is ConnectionStatus.Failed -> onOpenChat()
@@ -146,7 +149,7 @@ fun ProfilesScreen(
                                     else -> onConnect(profile)
                                 }
                             },
-                            onNewSession = { onConnect(profile) },
+                            onNewSession = { onStartNew(profile) },
                             onEdit = { onEdit(profile) },
                         )
                     }
@@ -183,7 +186,13 @@ private fun ProfileCard(
             Column(Modifier.weight(1f)) {
                 Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(profile.address, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(profile.cwd, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    profile.cwd.ifEmpty { if (profile.isPlasmaLlm) "The folder open in PlasmaLLM" else "" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (state != null) {
                     Spacer(Modifier.height(4.dp))
                     val status = state.status
@@ -199,8 +208,11 @@ private fun ProfileCard(
             Box {
                 IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Options") }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    if (hasLastSession) {
-                        DropdownMenuItem(text = { Text("Start a new session") }, onClick = { menuOpen = false; onNewSession() })
+                    if (hasLastSession || profile.isPlasmaLlm) {
+                        DropdownMenuItem(
+                            text = { Text(if (profile.isPlasmaLlm) "Start a new chat on the computer" else "Start a new session") },
+                            onClick = { menuOpen = false; onNewSession() },
+                        )
                     }
                     DropdownMenuItem(
                         text = { Text("Edit") },
@@ -216,7 +228,7 @@ private fun ProfileCard(
 @Composable
 fun SetupHelp() {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("There are three kinds of agent:", style = MaterialTheme.typography.bodyMedium)
+        Text("There are four kinds of agent:", style = MaterialTheme.typography.bodyMedium)
         Text("On this device", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         Text(
             "A coding agent built into DroidACP. It calls Claude with your own Anthropic API key and works on a " +
@@ -253,6 +265,14 @@ fun SetupHelp() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Text("PlasmaLLM on a computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text(
+            "If the computer runs PlasmaLLM (a desktop app for KDE Plasma), this device can be a second screen for it: " +
+                "it shows the chat open there, and whatever either side types or answers shows on both. No bridge or token: " +
+                "turn on Settings → Phone access in PlasmaLLM, sign this device in to the same Tailscale account, and enter " +
+                "the computer's Tailscale name here.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -274,8 +294,12 @@ fun ProfileEditScreen(
     val kind = ProfileKind.fromId(kindId)
     val local = kind == ProfileKind.Local
     val cloud = kind == ProfileKind.Cloud
+    val plasma = kind == ProfileKind.PlasmaLlm
     var name by rememberSaveable { mutableStateOf(initial?.name ?: "") }
-    var url by rememberSaveable { mutableStateOf(initial?.url?.ifEmpty { "ws://" } ?: "ws://") }
+    var url by rememberSaveable { mutableStateOf(initial?.takeIf { it.kind == ProfileKind.Bridge }?.url?.ifEmpty { "ws://" } ?: "ws://") }
+    // PlasmaLLM: the computer's Tailscale name, and an optional folder (empty = the one open there).
+    var host by rememberSaveable { mutableStateOf(initial?.takeIf { it.isPlasmaLlm }?.url ?: "") }
+    var plasmaCwd by rememberSaveable { mutableStateOf(initial?.takeIf { it.isPlasmaLlm }?.cwd ?: "") }
     var token by rememberSaveable { mutableStateOf(initial?.token ?: "") }
     var apiKey by rememberSaveable { mutableStateOf(initial?.apiKey ?: "") }
     // Each kind keeps its own folder text, so switching kinds doesn't lose what you typed.
@@ -316,6 +340,10 @@ fun ProfileEditScreen(
             name = name.trim(), kind = kind, url = url.trim(), token = token.trim(), apiKey = "",
             cwd = bridgeCwd.trim(), repoUrl = "", repoToken = "",
         )
+        ProfileKind.PlasmaLlm -> base.copy(
+            name = name.trim(), kind = kind, url = host.trim(), token = "", apiKey = "",
+            cwd = plasmaCwd.trim(), repoUrl = "", repoToken = "",
+        )
     }
     val problems = draft.validate()
 
@@ -350,12 +378,22 @@ fun ProfileEditScreen(
                     FilterChip(selected = local, onClick = { kindId = ProfileKind.Local.id }, label = { Text("On this device") })
                     FilterChip(selected = cloud, onClick = { kindId = ProfileKind.Cloud.id }, label = { Text("Cloud") })
                     FilterChip(selected = kind == ProfileKind.Bridge, onClick = { kindId = ProfileKind.Bridge.id }, label = { Text("On a computer (bridge)") })
+                    FilterChip(selected = plasma, onClick = { kindId = ProfileKind.PlasmaLlm.id }, label = { Text("PlasmaLLM on a computer") })
                 }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Name") },
-                    placeholder = { Text(if (local) "Claude on this tablet" else if (cloud) "Claude in the cloud" else "Claude on my desktop") },
+                    placeholder = {
+                        Text(
+                            when {
+                                local -> "Claude on this tablet"
+                                cloud -> "Claude in the cloud"
+                                plasma -> "PlasmaLLM on my laptop"
+                                else -> "Claude on my desktop"
+                            },
+                        )
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -456,6 +494,36 @@ fun ProfileEditScreen(
                     }
                     BridgeSetupCard(folder = bridgeCwd.trim())
                 }
+                if (plasma) {
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { host = it },
+                        label = { Text("Computer's Tailscale name") },
+                        placeholder = { Text("my-laptop") },
+                        supportingText = {
+                            Text(
+                                "As the Tailscale app lists it, or its 100.x address. PlasmaLLM listens on port " +
+                                    "${PlasmaLlm.DEFAULT_PORT}; add :port if you changed it there.",
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    FolderField(
+                        value = plasmaCwd,
+                        onValueChange = { plasmaCwd = it },
+                        label = "Folder for new chats (optional)",
+                        placeholder = "Empty: the folder open in PlasmaLLM",
+                        supportingText = "Connecting always shows the chat open in PlasmaLLM. This folder is only used by \"Start a new chat\"; leave it empty to stay in PlasmaLLM's folder.",
+                        recent = recentFolders(ProfileKind.PlasmaLlm),
+                        onForget = { onForgetFolder(ProfileKind.PlasmaLlm, it) },
+                    )
+                    OutlinedButton(onClick = { browsing = true }, enabled = host.isNotBlank()) {
+                        Text(if (host.isNotBlank()) "Browse the computer's folders…" else "Browse (enter the name first)")
+                    }
+                    PlasmaSetupCard()
+                }
                 if (triedSave) {
                     for (problem in problems) Text("• $problem", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -475,6 +543,9 @@ fun ProfileEditScreen(
                         "The agent runs in a Linux container hosted by Anthropic (Claude Managed Agents, a beta service), with a " +
                             "real shell, git and package managers. Each session gets a fresh container; the conversation is kept " +
                             "on Anthropic's side. Billed to your API key: tokens plus a small charge for container time."
+                    } else if (plasma) {
+                        "This device becomes a second screen for PlasmaLLM: it shows the chat open on the computer, and whatever " +
+                            "either side types or answers shows on both. Opening another chat here opens it on the computer too."
                     } else {
                         "Tip: Tailscale or a VPN lets you reach a computer at home from anywhere. " +
                             "Running the bridge in Termux on this tablet works too — use ws://127.0.0.1:8765."
@@ -489,11 +560,11 @@ fun ProfileEditScreen(
     if (browsing) {
         BridgeFolderDialog(
             folders = bridgeFolders,
-            bridgeUrl = url,
-            token = token,
-            start = bridgeCwd.trim().ifEmpty { null },
+            bridgeUrl = if (plasma) PlasmaLlm.url(host) else url,
+            token = if (plasma) "" else token,
+            start = (if (plasma) plasmaCwd else bridgeCwd).trim().ifEmpty { null },
             onPick = { path, _ ->
-                bridgeCwd = path
+                if (plasma) plasmaCwd = path else bridgeCwd = path
                 browsing = false
             },
             onDismiss = { browsing = false },
@@ -541,6 +612,26 @@ private fun BridgeSetupCard(folder: String) {
                     OutlinedButton(onClick = { app.open(context) }) { Text(if (installed) "Open ${app.label}" else "Get ${app.label}") }
                 }
             }
+        }
+    }
+}
+
+/** What PlasmaLLM needs on the computer, and a shortcut to Tailscale. */
+@Composable
+private fun PlasmaSetupCard() {
+    val context = LocalContext.current
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("On the computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "In PlasmaLLM, turn on Settings → Phone access. It only lets in devices signed in to the computer's own " +
+                    "Tailscale account, so sign this device in to that account too. No token is needed.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val tailscale = HelperApp.Tailscale
+            val installed = remember { tailscale.isInstalled(context) }
+            OutlinedButton(onClick = { tailscale.open(context) }) { Text(if (installed) "Open ${tailscale.label}" else "Get ${tailscale.label}") }
         }
     }
 }

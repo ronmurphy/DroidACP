@@ -44,6 +44,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.acp.ToolCall
+import com.droidacp.core.acp.ToolContent
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.PendingPermission
@@ -74,12 +75,18 @@ fun PermissionDialog(permission: PendingPermission, call: ToolCall?, onAnswer: (
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        for (location in call.locations) {
-                            Text(location.path, style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                        // Each path once: a diff shows its file's name, so its path goes here, above it.
+                        val diffs = call.content.filterIsInstance<ToolContent.Diff>()
+                        val paths = (call.locations.map { it.path } + diffs.map { it.path }).distinct()
+                        for (path in paths) {
+                            Text(path, style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                         }
                         val input = call.rawInput
-                        if (input != null && call.content.none { it is com.droidacp.core.acp.ToolContent.Diff }) MonoBox(input, label = "Input")
-                        for (content in call.content) ToolContentView(content)
+                        // Wrapped, not scrolled sideways: you should see the whole change before allowing it.
+                        if (input != null && diffs.isEmpty()) MonoBox(input, label = "Input", wrap = true)
+                        for (content in call.content) {
+                            if (content is ToolContent.Diff) DiffView(content, wrap = true, showPath = false) else ToolContentView(content, wrap = true)
+                        }
                     }
                 }
 
@@ -161,8 +168,10 @@ fun SessionSettingsSheet(state: ChatState, actions: ChatActions, onDismiss: () -
             SelectionContainer {
                 Column {
                     InfoLine("Agent", listOfNotNull(state.agent?.displayName, state.agent?.version).joinToString(" "))
+                    val plasma = state.plasmaLlm
                     InfoLine(if (state.profile?.kind == ProfileKind.Bridge) "Bridge" else "Runs", state.profile?.address ?: "")
-                    InfoLine("Folder", state.profile?.cwd ?: "")
+                    if (plasma != null) InfoLine("PlasmaLLM", listOfNotNull(plasma.version, "companion protocol ${plasma.protocol}").joinToString(", "))
+                    InfoLine("Folder", plasma?.chat?.cwd?.ifEmpty { null } ?: state.profile?.cwd ?: "")
                     InfoLine("Session", state.sessionId ?: "")
                 }
             }

@@ -3,7 +3,7 @@
 An Android client for the **[Agent Client Protocol](https://agentclientprotocol.com)** (ACP):
 chat with coding agents from an Android tablet or phone, with a home-screen widget.
 
-It can talk to three kinds of agent:
+It can talk to four kinds of agent:
 
 - **On this device**: a coding agent built into the app. It calls Claude with your own
   Anthropic API key and works on a folder on the device. No computer needed.
@@ -11,6 +11,8 @@ It can talk to three kinds of agent:
   shell, git and package managers. Also needs only an API key.
 - **On a computer**: Claude Code, Codex, Gemini CLI or any other ACP agent, reached
   through a small bridge.
+- **PlasmaLLM on a computer**: a second screen for [PlasmaLLM](#be-a-second-screen-for-plasmallm),
+  a desktop ACP client for KDE Plasma. No bridge or token.
 
 ```
  Built-in agent: everything inside the app
@@ -144,6 +146,35 @@ Sign in to the agent on that computer first (e.g. run `claude` once and `/login`
 To reach your computer from outside your home network, use something like
 [Tailscale](https://tailscale.com). See [bridge/README.md](bridge/README.md) for all options.
 
+## Be a second screen for PlasmaLLM
+
+PlasmaLLM is a desktop ACP client for KDE Plasma (Qt). Its **Settings → Phone access**
+lets DroidACP join the chat open on the computer, over Tailscale: the phone shows that
+chat with its history, and whatever either side types or answers shows on both.
+
+1. In PlasmaLLM, turn on Settings → Phone access. It listens on the computer's Tailscale
+   address, port 8766, and only lets in devices signed in to the same Tailscale account,
+   so there is no token.
+2. Here, Add agent → **PlasmaLLM on a computer**, and enter the computer's Tailscale name
+   (e.g. `my-laptop`). The folder is optional: it is only used for new chats.
+
+Then:
+
+- **Tapping the agent joins the chat open in PlasmaLLM**, whatever you had open here
+  before. The menu's *Start a new chat on the computer* starts a new one there.
+- **The phone follows the computer.** When PlasmaLLM opens another chat, so does the
+  phone. Opening a chat from the history here opens it on the computer too.
+- **Prompts typed on the computer show up here**, with the reply, and the chat shows
+  as working. Stop works for them too.
+- **A permission prompt answered on the computer closes here**: the first answer counts.
+- A notification tells you when a turn ends while DroidACP is in the background.
+
+DroidACP says it's a companion when it connects, and uses PlasmaLLM's extensions only
+when PlasmaLLM answers in kind; anything else on that port is treated as a plain ACP
+agent. The protocol is described in PlasmaLLM's `docs/companion-protocol.md`
+(version 1); DroidACP's side is `core/.../acp/PlasmaLlm.kt`. The bridge stays: use it for
+computers without PlasmaLLM.
+
 ## What it does
 
 - Streams the agent's replies, rendered as Markdown (code blocks with Copy, tables, lists)
@@ -180,7 +211,8 @@ without anything Android-specific:
 | `acp/AcpTypes.kt` | Kotlin models + forgiving JSON parsing for session updates, tool calls, plans, config options |
 | `acp/Transport.kt`, `acp/WebSocketTransport.kt` | How messages travel: the interface, and OkHttp WebSocket (one JSON-RPC message per text frame) |
 | `chat/Transcript.kt` | Pure functions that fold `session/update`s into the chat state (easy to unit test) |
-| `chat/AgentController.kt` | Owns a connection, exposes `StateFlow<ChatState>` to the UI |
+| `chat/AgentController.kt` | Owns a connection, exposes `StateFlow<ChatState>` to the UI; follows PlasmaLLM's open chat |
+| `acp/PlasmaLlm.kt` | PlasmaLLM's companion protocol: addresses, the `initialize` declaration, `_plasmallm/...` notifications and error reasons |
 | `markdown/Markdown.kt`, `diff/LineDiff.kt` | Small Markdown parser, line-diff (longest common subsequence) |
 
 **`core/.../agent/`: the built-in agent (also plain Kotlin)**

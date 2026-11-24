@@ -21,6 +21,8 @@ class WebSocketTransport(
     private val url: String,
     private val token: String?,
     private val listener: TransportListener,
+    /** What to say when the other end answers HTTP 401 or 403. */
+    private val refused: String = "The bridge rejected the token",
 ) : Transport {
     private var socket: WebSocket? = null
     private val finished = AtomicBoolean(false)
@@ -62,7 +64,7 @@ class WebSocketTransport(
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val reason = when (response?.code) {
                         null -> t.message ?: t.javaClass.simpleName
-                        401, 403 -> "The bridge rejected the token (HTTP ${response.code})"
+                        401, 403 -> "$refused (HTTP ${response.code})"
                         else -> "HTTP ${response.code} ${response.message}".trim()
                     }
                     finish(reason, t)

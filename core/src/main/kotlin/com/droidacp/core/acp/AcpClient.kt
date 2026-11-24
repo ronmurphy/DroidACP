@@ -24,6 +24,12 @@ interface AcpClientHandler {
 
     /** The agent wants permission to run a tool. Suspend until the user decides. */
     suspend fun requestPermission(request: PermissionRequest): PermissionOutcome
+
+    /**
+     * An extension notification (its method starts with `_`, e.g. `_plasmallm/state`).
+     * Called in arrival order, like [onSessionUpdate]. Ignored unless overridden.
+     */
+    fun onExtNotification(method: String, params: JsonObject) {}
 }
 
 /**
@@ -52,9 +58,11 @@ class AcpClient(
 
     fun close(reason: String) = rpc.close(reason)
 
-    suspend fun initialize(clientName: String, clientTitle: String, clientVersion: String): InitializeResult {
+    /** [meta] goes into the params' `_meta` (e.g. [PlasmaLlm.initializeMeta]). */
+    suspend fun initialize(clientName: String, clientTitle: String, clientVersion: String, meta: JsonObject? = null): InitializeResult {
         val params = buildJsonObject {
             put("protocolVersion", PROTOCOL_VERSION)
+            if (meta != null) put("_meta", meta)
             putJsonObject("clientCapabilities") {
                 putJsonObject("fs") {
                     put("readTextFile", false)
@@ -81,6 +89,7 @@ class AcpClient(
             agent = Implementation.parse(result.obj("agentInfo")),
             capabilities = AgentCapabilities.parse(result.obj("agentCapabilities")),
             authMethods = result.objects("authMethods").mapNotNull { AuthMethod.parse(it) },
+            plasmaLlm = PlasmaHello.parse(result.obj("_meta")),
         )
     }
 
@@ -209,7 +218,11 @@ class AcpClient(
     }
 
     private fun handleNotification(method: String, params: JsonElement?) {
-        if (method != "session/update") return // e.g. extension notifications starting with "_"
+        if (method.startsWith("_")) {
+            handler.onExtNotification(method, params as? JsonObject ?: JsonObject(emptyMap()))
+            return
+        }
+        if (method != "session/update") return
         val p = params as? JsonObject ?: return
         val sessionId = p.str("sessionId") ?: return
         val update = p.obj("update") ?: return

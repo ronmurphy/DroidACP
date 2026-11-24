@@ -160,7 +160,7 @@ fun ChatScreen(
             val status = state.status
 
             when {
-                state.items.isEmpty() && status is ConnectionStatus.Connecting -> CenterMessage(if (state.profile?.isLocal == true || state.profile?.isCloud == true) "Starting the agent…" else "Connecting to ${state.profile?.url ?: "agent"}…", progress = true)
+                state.items.isEmpty() && status is ConnectionStatus.Connecting -> CenterMessage(connectingText(state), progress = true)
                 state.items.isEmpty() && status is ConnectionStatus.Failed -> ConnectionError(status.reason, actions)
                 state.authRequired -> AuthPanel(state, actions)
                 state.items.isEmpty() && state.startingSession -> CenterMessage("Starting a session…", progress = true)
@@ -212,6 +212,20 @@ fun ChatScreen(
     if (historyOpen) HistorySheet(state, onOpen = { id -> historyOpen = false; actions.openSession(id) }, onDismiss = { historyOpen = false })
 }
 
+private fun connectingText(state: ChatState): String {
+    val p = state.profile
+    return when {
+        p == null -> "Connecting…"
+        p.isLocal || p.isCloud -> "Starting the agent…"
+        p.isPlasmaLlm -> "Connecting to PlasmaLLM on ${p.url}…"
+        else -> "Connecting to ${p.url}…"
+    }
+}
+
+/** The project folder: PlasmaLLM's open folder when connected to it. */
+private fun folderOf(state: ChatState): String? =
+    state.plasmaLlm?.chat?.cwd?.ifEmpty { null } ?: state.profile?.cwd?.ifEmpty { null }
+
 private fun subtitle(state: ChatState): String {
     val status = state.status
     return when {
@@ -220,9 +234,10 @@ private fun subtitle(state: ChatState): String {
         status is ConnectionStatus.Disconnected -> "Not connected"
         state.cancelling -> "Stopping…"
         state.permissions.isNotEmpty() -> "Waiting for your permission"
+        state.busy && state.remoteTurn -> "Working (sent from another screen)…"
         state.busy -> "Working…"
         state.startingSession -> "Starting session…"
-        else -> listOfNotNull(state.sessionTitle, state.currentModeName).joinToString(" · ").ifEmpty { state.profile?.cwd ?: "Ready" }
+        else -> listOfNotNull(state.sessionTitle, state.currentModeName).joinToString(" · ").ifEmpty { folderOf(state) ?: "Ready" }
     }
 }
 
@@ -251,7 +266,12 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.size(10.dp))
                     Text(
-                        if (state.cancelling) "Stopping…" else "${state.agentName} is working…",
+                        when {
+                            state.cancelling -> "Stopping…"
+                            // A prompt typed in PlasmaLLM's window or on another device.
+                            state.remoteTurn -> "${state.agentName} is working on a message sent from another screen…"
+                            else -> "${state.agentName} is working…"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

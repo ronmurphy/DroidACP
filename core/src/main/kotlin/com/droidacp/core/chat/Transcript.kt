@@ -19,9 +19,10 @@ object Transcript {
         is SessionUpdate.AgentMessageChunk -> appendAgent(state, update.content, update.messageId)
         is SessionUpdate.AgentThoughtChunk -> appendThought(state, update.content, update.messageId)
         is SessionUpdate.UserMessageChunk ->
-            // While *we* are running a turn we already added the user's message locally;
-            // agents normally only send user chunks when replaying history (session/load).
-            if (state.busy && !state.replaying) state else appendUser(state, update.content)
+            // While *we* are running a turn we already added the user's message locally, so
+            // an echo is dropped. Otherwise user chunks come from a history replay (session/load)
+            // or from a prompt typed elsewhere (PlasmaLLM's window, another device).
+            if (state.busy && !state.remoteTurn && !state.replaying) state else appendUser(state, update.content, update.messageId)
         is SessionUpdate.ToolCallStarted -> upsertTool(state, update.call.id) { existing ->
             existing?.let { mergeFull(it, update.call) } ?: update.call
         }
@@ -102,19 +103,22 @@ object Transcript {
         return state.copy(items = state.items + ChatItem.Thought(state.nextKey, messageId, text), nextKey = state.nextKey + 1)
     }
 
-    private fun appendUser(state: ChatState, content: ContentBlock): ChatState {
+    private fun appendUser(state: ChatState, content: ContentBlock, messageId: String?): ChatState {
         val last = state.items.lastOrNull()
-        if (last is ChatItem.User) {
+        // Stricter than agent chunks: two prompts in a row (one sent here, one typed on
+        // the computer) must stay two bubbles, so the ids have to match exactly.
+        if (last is ChatItem.User && last.messageId == messageId) {
             val updated = when (content) {
                 is ContentBlock.Text -> last.copy(text = last.text + content.text)
                 else -> last.copy(attachments = last.attachments + content)
             }
             return state.copy(items = state.items.dropLast(1) + updated)
         }
-        return when (content) {
-            is ContentBlock.Text -> addUser(state, content.text)
-            else -> addUser(state, "", listOf(content))
+        val item = when (content) {
+            is ContentBlock.Text -> ChatItem.User(state.nextKey, content.text, messageId = messageId)
+            else -> ChatItem.User(state.nextKey, "", listOf(content), messageId)
         }
+        return state.copy(items = state.items + item, nextKey = state.nextKey + 1)
     }
 
     /** Chunks belong together unless both carry message ids and the ids differ. */

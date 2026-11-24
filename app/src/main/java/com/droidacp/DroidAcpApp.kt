@@ -64,7 +64,7 @@ class DroidAcpApp : Application() {
     }
 
     /**
-     * Decides how to reach an agent: bridge agents over a WebSocket; the built-in
+     * Decides how to reach an agent: bridge and PlasmaLLM agents over a WebSocket; the built-in
      * agent and cloud mode through an in-memory pipe inside this process.
      */
     private fun transportFactory(): TransportFactory {
@@ -83,6 +83,11 @@ class DroidAcpApp : Application() {
                 ProfileKind.Local -> LocalTransport(listener, localAgent, profile.apiKey)
                 ProfileKind.Cloud -> CloudTransport(listener, cloudAgent, profile.apiKey, profile.repoUrl, profile.repoToken)
                 ProfileKind.Bridge -> WebSocketTransport(http, profile.url, profile.token, listener)
+                // No token: PlasmaLLM lets in devices signed in to the computer's own Tailscale account.
+                ProfileKind.PlasmaLlm -> WebSocketTransport(
+                    http, profile.connectUrl, null, listener,
+                    refused = "PlasmaLLM refused this device. Phone access only lets in devices signed in to the computer's own Tailscale account",
+                )
             }
         }
     }

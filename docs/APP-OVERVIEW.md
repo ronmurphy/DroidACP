@@ -15,10 +15,10 @@ The app is the ACP *client*; the agent is something else.
 It is meant to stay light: a chat screen, tool-call cards, diffs, permission
 prompts and a home-screen widget, not an IDE.
 
-## The four ways to reach an agent
+## The ways to reach an agent
 
-Every saved agent ("profile", `core/.../chat/Profile.kt`) has a kind. All four
-kinds end up speaking the same ACP to the same chat screen; only the transport
+Every saved agent ("profile", `core/.../chat/Profile.kt`) has a kind. All of
+them end up speaking the same ACP to the same chat screen; only the transport
 differs.
 
 | Kind | Where the agent runs | Login / billing | Status |
@@ -26,6 +26,7 @@ differs.
 | **On a computer (bridge)** | Any ACP agent on a PC, started by `bridge/acp-bridge.js` | Whatever the agent uses, e.g. a Claude subscription in Claude Code | **Tested end to end** on a phone over Tailscale to CachyOS with Claude Code |
 | **On this device** | A coding agent built into the app (`core/.../agent/`) | The user's Anthropic API key | Unit-tested; **not yet tried on a device** |
 | **Cloud** | Claude Managed Agents: Anthropic hosts the agent loop and a Linux container per session (`core/.../cloud/`) | The user's Anthropic API key (tokens + container time) | Unit-tested against fakes; **not yet tried against the real service** |
+| **PlasmaLLM on a computer** | PlasmaLLM's own agent process; the phone is a second screen for the chat open there | Whatever PlasmaLLM's agent uses | PlasmaLLM's side tried with an unchanged DroidACP; DroidACP's companion side unit-tested against a fake PlasmaLLM (`PlasmaLlmTest`), **not yet tried on a device** |
 | *(Termux)* | A bridge running inside Termux on the same phone | As for the bridge | Not a separate kind: a bridge profile pointing at `ws://127.0.0.1:8765` |
 
 Bridge mode is the main path for people without an API key. The two in-app
@@ -142,6 +143,41 @@ middle ground is cheap: separate agent processes, but the phone can
 `session/load` a session the desktop created (it shows up in `session/list` for
 the same folder), and vice versa, as long as both don't write to it at once.
 
+PlasmaLLM went the shared-session way: see [PlasmaLLM companion](#plasmallm-companion).
+
+## PlasmaLLM companion
+
+PlasmaLLM (a Qt desktop ACP client, a separate repository) hosts DroidACP on port
+8766, over Tailscale only, letting in devices of the computer's own Tailscale
+account (no token). The link between the two apps is a written spec in
+PlasmaLLM's repository, `docs/companion-protocol.md`, currently version 1; changes
+go through it, with a version bump. DroidACP's side:
+
+- `ProfileKind.PlasmaLlm`: the user types the computer's Tailscale name;
+  `PlasmaLlm.url()` makes it `ws://name:8766`. The folder is optional (empty =
+  PlasmaLLM's open folder) and only used for "Start a new chat".
+- `initialize` carries `_meta: {plasmallm: {protocol: 1}}`. PlasmaLLM answers with
+  `_meta.plasmallm` (protocol, version, the open chat's `sessionId`, `cwd`, `title`,
+  `busy`). Without it, DroidACP treats the other end as plain ACP.
+- On every connect and reconnect, DroidACP `session/load`s the chat PlasmaLLM has
+  open, with that chat's `cwd` (never the phone's saved last session: loading
+  another chat would switch the computer's window to it). Loading the open chat
+  costs no agent call.
+- `_plasmallm/state` naming another chat → load it (states with an empty
+  `sessionId` are ignored). `_plasmallm/turn` started/ended → `ChatState.remoteTurn`
+  and `busy` for turns sent elsewhere, plus the background notification.
+  `_plasmallm/permission_resolved` → close the prompt (answered "cancelled", which
+  PlasmaLLM ignores).
+- Errors carry `error.data.plasmallm.reason`: `not_open_chat` makes the phone follow
+  the open chat; a failed load doesn't start a new chat of DroidACP's own (PlasmaLLM
+  already did, and names it).
+- Prompts typed elsewhere arrive as `user_message_chunk`s with a `messageId`;
+  consecutive user chunks are only merged when their ids match.
+
+All of this lives in `core/.../acp/PlasmaLlm.kt` and `AgentController.kt` (the
+`plasma` parts of `Link`). Not built yet: a side chat (needs protocol 2), and the
+PlasmaLLM-style side panel on tablets.
+
 ## The built-in agent ("On this device")
 
 `core/.../agent/`. A small coding agent in the spirit of Claude Code:
@@ -189,13 +225,18 @@ the same folder), and vice versa, as long as both don't write to it at once.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~50 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~70 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
-                                # cloud), SDK adapters against a local fake server
+                                # cloud), SDK adapters against a local fake server,
+                                # the PlasmaLLM companion against a fake PlasmaLLM
 node bridge/acp-bridge.js --port 18765 --token test -- node bridge/mock-agent.js &
 DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :core:test
                                 # adds end-to-end tests through the real bridge
 ```
+
+The end-to-end tests also run against PlasmaLLM's phone access (with
+`node bridge/mock-agent.js` as its agent): leave `DROIDACP_BRIDGE_TOKEN` empty and
+set `DROIDACP_BRIDGE_CWD` to the folder PlasmaLLM has open.
 
 GitHub Actions runs both on every push, builds a signed release APK, and
 publishes it as a GitHub Release for pushes to `main` (`DroidACP-0.1.<run>.apk`).
@@ -208,8 +249,8 @@ Roughly in order of value:
 
 1. **Try the two in-app agents on a real device** and fix what turns up. The
    riskiest part is the release build's code shrinking around the Anthropic SDK.
-2. **Desktop gateway / shared sessions** (see the bridge section): the natural
-   bridge between the Qt desktop app and the phone.
+2. **Try the PlasmaLLM companion on a device**, then its next steps: a side chat
+   (companion protocol 2) and a PlasmaLLM-like side panel on tablets.
 3. **Answer agent-side `fs/*` requests** when the agent and app share files, and
    show the agent's `terminal` output: currently declined by design.
 4. **Other model providers** for the built-in agent (an OpenAI-compatible client
@@ -230,6 +271,7 @@ Roughly in order of value:
 | How updates change the chat | `core/.../chat/Transcript.kt` (+ `TranscriptTest`) |
 | Protocol requests / parsing | `core/.../acp/AcpClient.kt`, `AcpTypes.kt` |
 | Connection lifecycle, resume | `core/.../chat/AgentController.kt` |
+| The PlasmaLLM companion | `core/.../acp/PlasmaLlm.kt`, the `plasma` parts of `AgentController.kt` (+ `PlasmaLlmTest`) |
 | Picking a transport per agent | `app/.../DroidAcpApp.kt` (`transportFactory`) |
 | The add/edit agent form | `app/.../ui/ProfilesScreen.kt`, `FolderPicker.kt` |
 | Colours and typography | `app/.../ui/Theme.kt`, `app/src/main/res/values/colors.xml` |

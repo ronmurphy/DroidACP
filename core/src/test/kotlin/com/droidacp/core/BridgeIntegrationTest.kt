@@ -27,8 +27,19 @@ import kotlin.test.assertTrue
  *   DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :core:test
  *
  * Skipped (passes trivially) when DROIDACP_BRIDGE_URL isn't set, e.g. in CI.
+ *
+ * Also runs against anything that answers like the bridge, such as PlasmaLLM's phone
+ * access with `node bridge/mock-agent.js` as its agent: leave DROIDACP_BRIDGE_TOKEN
+ * empty (the token checks are skipped) and set DROIDACP_BRIDGE_CWD to the folder
+ * PlasmaLLM has open. Without DROIDACP_BRIDGE_CWD the test uses a new temporary folder.
  */
 class BridgeIntegrationTest {
+
+    /** The project folder for the session, and whether we made it (and so delete it afterwards). */
+    private fun projectFolder(): Pair<java.io.File, Boolean> {
+        val given = System.getenv("DROIDACP_BRIDGE_CWD")?.takeIf { it.isNotBlank() }
+        return if (given != null) java.io.File(given) to false else java.nio.file.Files.createTempDirectory("droidacp-demo").toFile() to true
+    }
 
     @Test
     fun fullDemoTurn() {
@@ -36,6 +47,7 @@ class BridgeIntegrationTest {
         val token = System.getenv("DROIDACP_BRIDGE_TOKEN") ?: ""
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val controller = AgentController.create(scope, "test")
+        val (project, madeIt) = projectFolder()
 
         // Auto-approve permission prompts, like a user tapping "Allow".
         scope.launch {
@@ -49,7 +61,7 @@ class BridgeIntegrationTest {
         try {
             runBlocking {
                 withTimeout(30_000) {
-                    controller.connect(Profile(name = "mock", url = url, token = token, cwd = "/tmp/demo"))
+                    controller.connect(Profile(name = "mock", url = url, token = token, cwd = project.path))
                     val ready = controller.state.first { it.canChat || it.status is ConnectionStatus.Failed }
                     assertEquals(ConnectionStatus.Connected, ready.status, "connect failed: $ready")
                     assertEquals("Mock Agent", ready.agentName)
@@ -93,6 +105,7 @@ class BridgeIntegrationTest {
             }
         } finally {
             scope.cancel()
+            if (madeIt) project.deleteRecursively()
         }
     }
 
@@ -119,8 +132,11 @@ class BridgeIntegrationTest {
 
                 val missing = runCatching { folders.list(url, token, java.io.File(dir, "nope").path) }.exceptionOrNull()
                 assertTrue(missing is BridgeFolderException && "No such folder" in missing.message!!, "got $missing")
-                val badToken = runCatching { folders.list(url, "wrong", dir.path) }.exceptionOrNull()
-                assertTrue(badToken is BridgeFolderException && "token" in badToken.message!!, "got $badToken")
+                // Only a bridge checks tokens (PlasmaLLM lets in your own Tailscale devices instead).
+                if (token.isNotEmpty()) {
+                    val badToken = runCatching { folders.list(url, "wrong", dir.path) }.exceptionOrNull()
+                    assertTrue(badToken is BridgeFolderException && "token" in badToken.message!!, "got $badToken")
+                }
             } finally {
                 dir.deleteRecursively()
             }

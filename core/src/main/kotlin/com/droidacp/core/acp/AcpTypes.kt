@@ -73,6 +73,8 @@ data class InitializeResult(
     val agent: Implementation?,
     val capabilities: AgentCapabilities,
     val authMethods: List<AuthMethod>,
+    /** Set when the other end is PlasmaLLM (its `_meta.plasmallm`). */
+    val plasmaLlm: PlasmaHello? = null,
 )
 
 data class SessionMode(val id: String, val name: String, val description: String?)

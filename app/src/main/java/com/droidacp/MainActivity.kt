@@ -91,10 +91,10 @@ class MainActivity : ComponentActivity() {
         if (intent.getBooleanExtra(EXTRA_FOCUS_INPUT, false)) focusRequests.intValue++
     }
 
-    private fun connect(profile: Profile, resume: String?) {
+    private fun connect(profile: Profile, resume: String?, startNew: Boolean = false) {
         attachments.clear()
         app.profiles.lastProfileId = profile.id
-        app.controller.connect(profile, resumeSessionId = resume)
+        app.controller.connect(profile, resumeSessionId = resume, startNew = startNew)
     }
 
     private fun maybeAskForNotifications() {
@@ -188,6 +188,10 @@ class MainActivity : ComponentActivity() {
                     connect(p, resume = null)
                     screen = Screen.Chat
                 },
+                onStartNew = { p ->
+                    connect(p, resume = null, startNew = true)
+                    screen = Screen.Chat
+                },
                 onResume = { p ->
                     connect(p, resume = app.profiles.lastSessionId(p.id))
                     screen = Screen.Chat
@@ -218,15 +222,20 @@ class MainActivity : ComponentActivity() {
                 initial = app.profiles.get(editingId),
                 recentFolders = { kind ->
                     when (kind) {
-                        ProfileKind.Bridge -> bridgeFolderHistory
+                        // PlasmaLLM runs on the same kind of computer as a bridge: share its folders.
+                        ProfileKind.Bridge, ProfileKind.PlasmaLlm -> bridgeFolderHistory
                         ProfileKind.Local -> localFolderHistory
                         ProfileKind.Cloud -> emptyList()
                     }
                 },
-                onForgetFolder = { kind, path -> app.folders.forget(kind, path) },
+                onForgetFolder = { kind, path -> app.folders.forget(if (kind == ProfileKind.PlasmaLlm) ProfileKind.Bridge else kind, path) },
                 bridgeFolders = app.bridgeFolders,
                 onSave = { p ->
-                    if (p.kind != ProfileKind.Cloud) app.folders.remember(p.kind, p.cwd)
+                    when {
+                        p.kind == ProfileKind.Cloud -> {}
+                        p.kind == ProfileKind.PlasmaLlm -> if (p.cwd.isNotBlank()) app.folders.remember(ProfileKind.Bridge, p.cwd)
+                        else -> app.folders.remember(p.kind, p.cwd)
+                    }
                     app.profiles.save(p)
                     screen = Screen.Profiles
                 },

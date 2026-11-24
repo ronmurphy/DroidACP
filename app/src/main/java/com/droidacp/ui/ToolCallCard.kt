@@ -122,28 +122,29 @@ private fun StatusBadge(status: String) {
     }
 }
 
+/** [wrap]: break long lines instead of scrolling sideways (the permission dialog, where nothing may be hidden). */
 @Composable
-fun ToolContentView(content: ToolContent) {
+fun ToolContentView(content: ToolContent, wrap: Boolean = false) {
     when (content) {
         is ToolContent.Block -> when (val block = content.block) {
             is ContentBlock.Text -> {
                 // Tool output is usually code-ish; markdown if it looks like markdown.
-                if (block.text.contains("```") || block.text.startsWith("#")) MarkdownText(block.text) else MonoBox(block.text)
+                if (block.text.contains("```") || block.text.startsWith("#")) MarkdownText(block.text) else MonoBox(block.text, wrap = wrap)
             }
             is ContentBlock.Image -> AgentImage(block)
             is ContentBlock.ResourceLink -> Text("📎 ${block.title ?: block.name}", style = MaterialTheme.typography.bodyMedium)
-            is ContentBlock.Resource -> MonoBox(block.text ?: block.uri, label = fileName(block.uri))
+            is ContentBlock.Resource -> MonoBox(block.text ?: block.uri, label = fileName(block.uri), wrap = wrap)
             else -> Text("(unsupported content)", style = MaterialTheme.typography.bodySmall)
         }
-        is ToolContent.Diff -> DiffView(content)
+        is ToolContent.Diff -> DiffView(content, wrap = wrap)
         is ToolContent.Terminal -> Text("Terminal output is shown on the agent's computer.", style = MaterialTheme.typography.bodySmall)
         is ToolContent.SessionRef -> Text("Sub-agent session ${content.sessionId.take(8)}…", style = MaterialTheme.typography.bodySmall)
     }
 }
 
-/** Monospace text in a tinted box, scrollable sideways, with a size cap for huge outputs. */
+/** Monospace text in a tinted box, scrollable sideways (or wrapped, with [wrap]), with a size cap for huge outputs. */
 @Composable
-fun MonoBox(text: String, label: String? = null) {
+fun MonoBox(text: String, label: String? = null, wrap: Boolean = false) {
     val shown = remember(text) { if (text.length > MAX_MONO_CHARS) text.take(MAX_MONO_CHARS) + "\n… (${text.length - MAX_MONO_CHARS} more characters)" else text }
     Column {
         if (label != null) {
@@ -156,17 +157,17 @@ fun MonoBox(text: String, label: String? = null) {
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 lineHeight = 16.sp,
-                softWrap = false,
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
+                softWrap = wrap,
+                modifier = (if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
                     .padding(10.dp),
             )
         }
     }
 }
 
+/** A file change. [showPath] = false when the path is already shown just above (the permission dialog). */
 @Composable
-fun DiffView(diff: ToolContent.Diff) {
+fun DiffView(diff: ToolContent.Diff, wrap: Boolean = false, showPath: Boolean = true) {
     val hunks = remember(diff) { LineDiff.hunks(LineDiff.diff(diff.oldText, diff.newText)) }
     val isNewFile = diff.oldText == null
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -177,18 +178,19 @@ fun DiffView(diff: ToolContent.Diff) {
                 Text("new file", style = MaterialTheme.typography.labelSmall, color = UiColors.diffAddedText)
             }
         }
-        Text(diff.path, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+        if (showPath) Text(diff.path, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
         if (hunks.isEmpty()) {
             Text("No changes.", style = MaterialTheme.typography.bodySmall)
             return@Column
         }
         Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
+            // Wrapped lines fill the width (so their colour does); scrolled ones are as wide as the longest.
+            Column((if (wrap) Modifier.fillMaxWidth() else Modifier.horizontalScroll(rememberScrollState())).padding(vertical = 6.dp)) {
                 var shownLines = 0
                 for (hunk in hunks) {
                     if (shownLines >= MAX_DIFF_LINES) break
                     if (hunk.collapsedBefore > 0) {
-                        DiffLineText("   ⋯ ${hunk.collapsedBefore} unchanged line${if (hunk.collapsedBefore == 1) "" else "s"}", null)
+                        DiffLineText("   ⋯ ${hunk.collapsedBefore} unchanged line${if (hunk.collapsedBefore == 1) "" else "s"}", null, wrap)
                     }
                     for (line in hunk.lines) {
                         if (shownLines >= MAX_DIFF_LINES) break
@@ -199,17 +201,17 @@ fun DiffView(diff: ToolContent.Diff) {
                             LineDiff.Kind.Same -> "  "
                         }
                         val number = (line.newNumber ?: line.oldNumber)?.toString()?.padStart(4) ?: "    "
-                        DiffLineText("$number $prefix${line.text}", line.kind)
+                        DiffLineText("$number $prefix${line.text}", line.kind, wrap)
                     }
                 }
-                if (shownLines >= MAX_DIFF_LINES) DiffLineText("   … diff truncated", null)
+                if (shownLines >= MAX_DIFF_LINES) DiffLineText("   … diff truncated", null, wrap)
             }
         }
     }
 }
 
 @Composable
-private fun DiffLineText(text: String, kind: LineDiff.Kind?) {
+private fun DiffLineText(text: String, kind: LineDiff.Kind?, wrap: Boolean) {
     val background = when (kind) {
         LineDiff.Kind.Added -> UiColors.diffAddedBg
         LineDiff.Kind.Removed -> UiColors.diffRemovedBg
@@ -220,9 +222,9 @@ private fun DiffLineText(text: String, kind: LineDiff.Kind?) {
         fontFamily = FontFamily.Monospace,
         fontSize = 12.sp,
         lineHeight = 16.sp,
-        softWrap = false,
+        softWrap = wrap,
         color = if (kind == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier
+        modifier = (if (wrap) Modifier.fillMaxWidth() else Modifier)
             .background(background)
             .padding(horizontal = 8.dp),
     )

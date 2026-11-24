@@ -7,6 +7,7 @@ import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.Implementation
 import com.droidacp.core.acp.PermissionOption
+import com.droidacp.core.acp.PlasmaHello
 import com.droidacp.core.acp.Plan
 import com.droidacp.core.acp.SessionMode
 import com.droidacp.core.acp.SessionSummary
@@ -24,7 +25,13 @@ sealed interface ConnectionStatus {
 sealed interface ChatItem {
     val key: Long
 
-    data class User(override val key: Long, val text: String, val attachments: List<ContentBlock> = emptyList()) : ChatItem
+    /** [messageId]: set when the agent sends one (PlasmaLLM does, for prompts typed on the computer). */
+    data class User(
+        override val key: Long,
+        val text: String,
+        val attachments: List<ContentBlock> = emptyList(),
+        val messageId: String? = null,
+    ) : ChatItem
 
     data class Agent(
         override val key: Long,
@@ -73,6 +80,8 @@ data class ChatState(
     val sessionTitle: String? = null,
     val items: List<ChatItem> = emptyList(),
     val busy: Boolean = false,
+    /** The running turn was started somewhere else (PlasmaLLM's window or another device), not by us. */
+    val remoteTurn: Boolean = false,
     val cancelling: Boolean = false,
     val replaying: Boolean = false,
     val modes: List<SessionMode> = emptyList(),
@@ -84,6 +93,8 @@ data class ChatState(
     val permissions: List<PendingPermission> = emptyList(),
     val pastSessions: List<SessionSummary>? = null,
     val loadingPastSessions: Boolean = false,
+    /** Set when connected to PlasmaLLM: its version and the chat open there. */
+    val plasmaLlm: PlasmaHello? = null,
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected
