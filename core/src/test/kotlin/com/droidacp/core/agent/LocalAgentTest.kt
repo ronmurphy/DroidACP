@@ -237,14 +237,14 @@ class LocalAgentTest {
 
         withTimeout(20_000) {
             val ready = controller.connectAndWait()
+            // One change at a time, waiting for each: each reply carries the agent's full
+            // list of options, so replies to changes sent together can overwrite each other.
             controller.setConfigOption(ready.configOptions.first { it.id == "model" }, "claude-haiku-5-5")
+            controller.state.first { s -> s.configOptions.any { it.id == "model" && it is ConfigOption.Select && it.currentValue == "claude-haiku-5-5" } }
             controller.setConfigOption(ready.configOptions.first { it.id == "effort" }, "low")
+            controller.state.first { s -> s.configOptions.any { it.id == "effort" && it is ConfigOption.Select && it.currentValue == "low" } }
             controller.setConfigOption(ready.configOptions.first { it.id == "web" }, false)
-            controller.state.first { s ->
-                s.configOptions.any { it is ConfigOption.Toggle && !it.currentValue } &&
-                    s.configOptions.any { it is ConfigOption.Select && it.currentValue == "low" } &&
-                    s.configOptions.any { it is ConfigOption.Select && it.currentValue == "claude-haiku-5-5" }
-            }
+            controller.state.first { s -> s.configOptions.any { it.id == "web" && it is ConfigOption.Toggle && !it.currentValue } }
             controller.promptAndWait("/init")
             val request = model.requests.single()
             assertEquals("claude-haiku-5-5", request.model)
