@@ -56,7 +56,10 @@ jobs:
           name: DroidACP-0.1.${{ github.run_number }}
           path: dist/*.apk
 
+      # Only builds of the default branch become releases. Other branches are still
+      # built and tested, and their APK is kept as a workflow artifact (above).
       - name: Publish release
+        if: github.ref_name == github.event.repository.default_branch
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
