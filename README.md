@@ -165,6 +165,9 @@ To reach your computer from outside your home network, use something like
 
 ## Code tour
 
+For a fuller description of how the pieces fit, what is tested and what could come
+next, see [docs/APP-OVERVIEW.md](docs/APP-OVERVIEW.md).
+
 The project has two Gradle modules, so the protocol logic can be read and tested
 without anything Android-specific:
 
