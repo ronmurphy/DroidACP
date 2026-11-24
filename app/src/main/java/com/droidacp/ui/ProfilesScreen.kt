@@ -2,6 +2,10 @@
 
 package com.droidacp.ui
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +37,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -51,6 +56,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,6 +67,8 @@ import androidx.compose.ui.unit.dp
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
+import com.droidacp.core.chat.ProfileKind
+import com.droidacp.data.StorageAccess
 
 /** Home screen: your saved agents. Tap one to connect. */
 @Composable
@@ -161,7 +169,7 @@ private fun ProfileCard(
         Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(profile.url, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(profile.address, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(profile.cwd, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (state != null) {
                     Spacer(Modifier.height(4.dp))
@@ -195,9 +203,18 @@ private fun ProfileCard(
 @Composable
 fun SetupHelp() {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("There are two kinds of agent:", style = MaterialTheme.typography.bodyMedium)
+        Text("On this device", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         Text(
-            "DroidACP speaks the Agent Client Protocol (ACP). ACP agents — Claude Code, Codex, Gemini CLI and others — " +
-                "run on a computer, so you start a small bridge next to the agent and connect to it from here.",
+            "A coding agent built into DroidACP. It calls Claude with your own Anthropic API key and works on a " +
+                "folder on this device: reading, editing and searching files, and running shell commands. " +
+                "Nothing else to install. Tap Add agent and choose \"On this device\".",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text("On a computer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text(
+            "Any agent that speaks the Agent Client Protocol (ACP) — Claude Code, Codex, Gemini CLI and others — " +
+                "running on a computer. You start a small bridge next to the agent and connect to it from here.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Text("1. On the computer (or in Termux), with Node.js installed:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -227,15 +244,35 @@ fun ProfileEditScreen(
     onDelete: (Profile) -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
+    // New agents start as "on this device"; it needs the least setup.
+    var local by rememberSaveable { mutableStateOf(initial?.isLocal ?: true) }
     var name by rememberSaveable { mutableStateOf(initial?.name ?: "") }
-    var url by rememberSaveable { mutableStateOf(initial?.url ?: "ws://") }
+    var url by rememberSaveable { mutableStateOf(initial?.url?.ifEmpty { "ws://" } ?: "ws://") }
     var token by rememberSaveable { mutableStateOf(initial?.token ?: "") }
-    var cwd by rememberSaveable { mutableStateOf(initial?.cwd ?: "") }
-    var showToken by rememberSaveable { mutableStateOf(false) }
+    var apiKey by rememberSaveable { mutableStateOf(initial?.apiKey ?: "") }
+    // Each kind keeps its own folder text, so switching kinds doesn't lose what you typed.
+    var bridgeCwd by rememberSaveable { mutableStateOf(initial?.takeIf { !it.isLocal }?.cwd ?: "") }
+    var localCwd by rememberSaveable { mutableStateOf(initial?.takeIf { it.isLocal }?.cwd ?: StorageAccess.defaultFolder()) }
+    var showSecret by rememberSaveable { mutableStateOf(false) }
     var triedSave by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    val draft = (initial ?: Profile(name = "", url = "", cwd = "")).copy(name = name.trim(), url = url.trim(), token = token.trim(), cwd = cwd.trim())
+    // File access is granted outside the app (in Settings), so re-check when we come back.
+    var storageGranted by remember { mutableStateOf(StorageAccess.isGranted(context)) }
+    val openSettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        storageGranted = StorageAccess.isGranted(context)
+    }
+    val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        storageGranted = granted
+    }
+
+    val base = initial ?: Profile(name = "", cwd = "")
+    val draft = if (local) {
+        base.copy(name = name.trim(), kind = ProfileKind.Local, url = "", token = "", apiKey = apiKey.trim(), cwd = localCwd.trim().trimEnd('/').ifEmpty { "/" })
+    } else {
+        base.copy(name = name.trim(), kind = ProfileKind.Bridge, url = url.trim(), token = token.trim(), apiKey = "", cwd = bridgeCwd.trim())
+    }
     val problems = draft.validate()
 
     Scaffold(
@@ -265,45 +302,87 @@ fun ProfileEditScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = local, onClick = { local = true }, label = { Text("On this device") })
+                    FilterChip(selected = !local, onClick = { local = false }, label = { Text("On a computer (bridge)") })
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Name") },
-                    placeholder = { Text("Claude on my desktop") },
+                    placeholder = { Text(if (local) "Claude on this tablet" else "Claude on my desktop") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("Bridge address") },
-                    placeholder = { Text("ws://192.168.1.20:8765") },
-                    supportingText = { Text("Printed by acp-bridge when it starts. Use wss:// for TLS.") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it },
-                    label = { Text("Token") },
-                    supportingText = { Text("Also printed by acp-bridge. Leave empty only if it runs with --no-auth.") },
-                    singleLine = true,
-                    visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                    trailingIcon = { TextButton(onClick = { showToken = !showToken }) { Text(if (showToken) "Hide" else "Show") } },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = cwd,
-                    onValueChange = { cwd = it },
-                    label = { Text("Project folder on the agent's computer") },
-                    placeholder = { Text("/home/me/projects/my-app") },
-                    supportingText = { Text("Absolute path. The agent reads and edits files here.") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (local) {
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        label = { Text("Anthropic API key") },
+                        placeholder = { Text("sk-ant-…") },
+                        supportingText = { Text("Create one at console.anthropic.com. It is stored encrypted on this device and only sent to Anthropic. Usage is billed to your account.") },
+                        singleLine = true,
+                        visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                        trailingIcon = { TextButton(onClick = { showSecret = !showSecret }) { Text(if (showSecret) "Hide" else "Show") } },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = localCwd,
+                        onValueChange = { localCwd = it },
+                        label = { Text("Project folder on this device") },
+                        supportingText = { Text("Absolute path. The agent reads, edits and runs commands here. It is created if it doesn't exist.") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (!storageGranted && StorageAccess.isNeededFor(context, localCwd.trim())) {
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("DroidACP needs file access to work in this folder.", style = MaterialTheme.typography.bodyMedium)
+                                Button(onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                        openSettings.launch(StorageAccess.settingsIntent(context))
+                                    } else {
+                                        askPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                    }
+                                }) { Text("Allow file access") }
+                            }
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Bridge address") },
+                        placeholder = { Text("ws://192.168.1.20:8765") },
+                        supportingText = { Text("Printed by acp-bridge when it starts. Use wss:// for TLS.") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("Token") },
+                        supportingText = { Text("Also printed by acp-bridge. Leave empty only if it runs with --no-auth.") },
+                        singleLine = true,
+                        visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                        trailingIcon = { TextButton(onClick = { showSecret = !showSecret }) { Text(if (showSecret) "Hide" else "Show") } },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = bridgeCwd,
+                        onValueChange = { bridgeCwd = it },
+                        label = { Text("Project folder on the agent's computer") },
+                        placeholder = { Text("/home/me/projects/my-app") },
+                        supportingText = { Text("Absolute path. The agent reads and edits files here.") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 if (triedSave) {
                     for (problem in problems) Text("• $problem", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -316,8 +395,13 @@ fun ProfileEditScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Tip: Tailscale or a VPN lets you reach a computer at home from anywhere. " +
-                        "Running the bridge in Termux on this tablet works too — use ws://127.0.0.1:8765.",
+                    if (local) {
+                        "The agent has no git, compilers or package managers unless this device provides them: Android's " +
+                            "own shell only has basic commands. Pick the model, effort and permission mode from the chat screen."
+                    } else {
+                        "Tip: Tailscale or a VPN lets you reach a computer at home from anywhere. " +
+                            "Running the bridge in Termux on this tablet works too — use ws://127.0.0.1:8765."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -329,7 +413,7 @@ fun ProfileEditScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete ${initial.name}?") },
-            text = { Text("This only removes the saved connection from this tablet.") },
+            text = { Text("This only removes the saved agent from this device. Files and saved conversations are kept.") },
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete(initial) }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )

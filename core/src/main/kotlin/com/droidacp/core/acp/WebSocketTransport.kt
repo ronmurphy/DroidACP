@@ -9,14 +9,6 @@ import okio.ByteString
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-interface TransportListener {
-    fun onOpen()
-    fun onMessage(text: String)
-
-    /** Called exactly once, whether we closed, the server closed, or the network failed. */
-    fun onClosed(reason: String, error: Throwable?)
-}
-
 /**
  * ACP over WebSocket: every text frame carries exactly one JSON-RPC message.
  *
@@ -29,11 +21,11 @@ class WebSocketTransport(
     private val url: String,
     private val token: String?,
     private val listener: TransportListener,
-) {
+) : Transport {
     private var socket: WebSocket? = null
     private val finished = AtomicBoolean(false)
 
-    fun connect() {
+    override fun connect() {
         val request = try {
             Request.Builder().url(url).apply {
                 if (!token.isNullOrBlank()) header("Authorization", "Bearer ${token.trim()}")
@@ -80,9 +72,9 @@ class WebSocketTransport(
     }
 
     /** Queue a message. Returns false if the socket is closed or its buffer is full. */
-    fun send(text: String): Boolean = socket?.send(text) ?: false
+    override fun send(text: String): Boolean = socket?.send(text) ?: false
 
-    fun close() {
+    override fun close() {
         socket?.close(1000, "client closed")
         finish("Disconnected", null)
     }

@@ -160,7 +160,7 @@ fun ChatScreen(
             val status = state.status
 
             when {
-                state.items.isEmpty() && status is ConnectionStatus.Connecting -> CenterMessage("Connecting to ${state.profile?.url ?: "agent"}…", progress = true)
+                state.items.isEmpty() && status is ConnectionStatus.Connecting -> CenterMessage(if (state.profile?.isLocal == true) "Starting the agent…" else "Connecting to ${state.profile?.url ?: "agent"}…", progress = true)
                 state.items.isEmpty() && status is ConnectionStatus.Failed -> ConnectionError(status.reason, actions)
                 state.authRequired -> AuthPanel(state, actions)
                 state.items.isEmpty() && state.startingSession -> CenterMessage("Starting a session…", progress = true)

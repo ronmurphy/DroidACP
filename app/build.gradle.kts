@@ -62,6 +62,10 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Licence texts that several libraries (Jackson, used by the Anthropic SDK)
+            // ship under the same file name, which the APK packager refuses to merge.
+            excludes += "/META-INF/{LICENSE,LICENSE.md,LICENSE.txt,NOTICE,NOTICE.md,NOTICE.txt,DEPENDENCIES,INDEX.LIST}"
+            excludes += "/META-INF/FastDoubleParser-{LICENSE,NOTICE}"
         }
     }
 }

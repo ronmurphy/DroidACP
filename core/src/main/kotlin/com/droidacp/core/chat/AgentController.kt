@@ -8,6 +8,7 @@ import com.droidacp.core.acp.PermissionOutcome
 import com.droidacp.core.acp.PermissionRequest
 import com.droidacp.core.acp.SessionSetup
 import com.droidacp.core.acp.SessionUpdate
+import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
 import com.droidacp.core.acp.WebSocketTransport
 import com.droidacp.core.rpc.ConnectionClosedException
@@ -26,7 +27,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -44,6 +44,15 @@ sealed interface AgentEvent {
 data class ImageAttachment(val mimeType: String, val base64: String)
 
 /**
+ * Makes the right [Transport] for a profile: a WebSocket for a bridge agent, an
+ * in-memory pipe for the built-in one. Passed to [AgentController] so the controller
+ * itself never needs to know which kind it is talking to.
+ */
+fun interface TransportFactory {
+    fun create(profile: Profile, listener: TransportListener): Transport
+}
+
+/**
  * Owns the connection to one agent and turns it into a [ChatState] the UI can draw.
  *
  * Lives as long as the app process (not tied to a screen), so rotating the tablet
@@ -52,8 +61,8 @@ data class ImageAttachment(val mimeType: String, val base64: String)
  */
 class AgentController(
     private val appScope: CoroutineScope,
-    private val http: OkHttpClient,
     private val clientVersion: String,
+    private val transports: TransportFactory,
 ) {
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
@@ -308,7 +317,7 @@ class AgentController(
     }
 
     /**
-     * Everything that belongs to one WebSocket connection. When it closes, its
+     * Everything that belongs to one connection. When it closes, its
      * coroutines are cancelled, and callbacks from an old Link are ignored.
      */
     private inner class Link(
@@ -319,7 +328,7 @@ class AgentController(
         private val job = SupervisorJob(appScope.coroutineContext[Job])
         val scope = CoroutineScope(appScope.coroutineContext + job)
         val client = AcpClient(scope, { text -> transport.send(text) }, this, ::record)
-        val transport = WebSocketTransport(http, profile.url, profile.token, this)
+        val transport: Transport = transports.create(profile, this)
 
         private val isCurrent: Boolean get() = link === this
 
@@ -474,7 +483,10 @@ class AgentController(
         private const val MAX_LOG_ENTRIES = 400
         private const val MAX_LOG_CHARS = 4000
 
-        /** Convenience for tests and simple setups. */
-        fun create(scope: CoroutineScope, version: String = "dev") = AgentController(scope, WebSocketTransport.defaultClient(), version)
+        /** Convenience for tests and simple setups: bridge agents only. */
+        fun create(scope: CoroutineScope, version: String = "dev"): AgentController {
+            val http = WebSocketTransport.defaultClient()
+            return AgentController(scope, version) { profile, listener -> WebSocketTransport(http, profile.url, profile.token, listener) }
+        }
     }
 }

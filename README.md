@@ -1,19 +1,33 @@
 # DroidACP
 
 An Android client for the **[Agent Client Protocol](https://agentclientprotocol.com)** (ACP):
-chat with coding agents such as Claude Code, Codex or Gemini CLI from an Android tablet
-or phone, with a home-screen widget.
+chat with coding agents from an Android tablet or phone, with a home-screen widget.
+
+It can talk to two kinds of agent:
+
+- **On this device**: a coding agent built into the app. It calls Claude with your own
+  Anthropic API key and works on a folder on the device. No computer needed.
+- **On a computer**: Claude Code, Codex, Gemini CLI or any other ACP agent, reached
+  through a small bridge.
 
 ```
- Android tablet                         your computer (or Termux)
+ Built-in agent: everything inside the app
+┌──────────────────────────────────────────────┐
+│  chat UI  ◀── ACP, in memory ──▶  agent loop │ ── HTTPS ──▶ Claude API
+│                                   + tools    │ ──▶ files and shell on the device
+└──────────────────────────────────────────────┘
+
+ Agent on a computer
 ┌──────────────┐   WebSocket (ws/wss)  ┌───────────────┐  stdin/stdout  ┌───────────┐
 │   DroidACP   │ ◀──────────────────▶ │ acp-bridge.js │ ◀────────────▶ │ ACP agent │
 └──────────────┘   JSON-RPC 2.0        └───────────────┘   JSON-RPC     └───────────┘
 ```
 
-ACP agents normally run as a subprocess of an editor and talk over stdin/stdout. A
-tablet can't start processes on your computer, so `bridge/acp-bridge.js` (one file,
-no dependencies) runs next to the agent and exposes it over a WebSocket.
+Both speak the same protocol to the same chat screen. ACP agents normally run as a
+subprocess of an editor and talk over stdin/stdout; an Android app can't start
+processes on your computer, so `bridge/acp-bridge.js` (one file, no dependencies) runs
+next to the agent and exposes it over a WebSocket. The built-in agent skips all that:
+its messages are passed along in memory.
 
 ## Install
 
@@ -25,7 +39,37 @@ no dependencies) runs next to the agent and exposes it over a WebSocket.
 
 Requires Android 8.0+; built for Android 15 (API 35).
 
-## Connect an agent
+## Run the agent on the device
+
+1. Get an API key from the [Anthropic Console](https://console.anthropic.com). Usage is
+   billed to your Anthropic account.
+2. In the app, tap **Add agent**, choose **On this device**, and enter a name and the key.
+3. Pick the project folder (default `Documents/DroidACP`) and tap **Allow file access**
+   if the app asks. Tap the agent to start.
+
+What the built-in agent can do:
+
+| Tool | What it does |
+| --- | --- |
+| Read, Write, Edit | Read files with line numbers, create files, make exact-match edits (shown as diffs) |
+| Glob, Grep | Find files by name pattern and by regular expression |
+| Bash | Run a shell command in the project folder |
+| TodoWrite | Keep a to-do list, shown as the plan bar |
+| Web search, web fetch | Run on Anthropic's side; switch off under options (searches are billed) |
+
+Plus: permission prompts with "always allow", four modes (**Ask first**, **Accept edits**,
+**Plan**, **Don't ask**), a model and effort picker, image attachments, `/init` to write
+a `CLAUDE.md`, project instructions read from `CLAUDE.md` or `AGENTS.md`, saved
+sessions you can reopen, and Stop.
+
+Limits, compared with Claude Code on a computer:
+
+- The shell is Android's own (`/system/bin/sh` with toybox). There is no git, compiler,
+  package manager, Python or Node unless the device has them.
+- No MCP servers, subagents, hooks or automatic context compaction yet.
+- The API key is the only sign-in; a Claude subscription login is not supported.
+
+## Connect an agent on a computer
 
 On the computer that has your code (Node.js 18+):
 
@@ -89,16 +133,31 @@ without anything Android-specific:
 | `rpc/JsonRpcConnection.kt` | JSON-RPC 2.0 in both directions: matching requests to responses, answering the agent's requests, ordered notifications |
 | `acp/AcpClient.kt` | The ACP methods: `initialize`, `session/new`, `session/prompt`, `session/cancel`, ... |
 | `acp/AcpTypes.kt` | Kotlin models + forgiving JSON parsing for session updates, tool calls, plans, config options |
-| `acp/WebSocketTransport.kt` | OkHttp WebSocket: one JSON-RPC message per text frame |
+| `acp/Transport.kt`, `acp/WebSocketTransport.kt` | How messages travel: the interface, and OkHttp WebSocket (one JSON-RPC message per text frame) |
 | `chat/Transcript.kt` | Pure functions that fold `session/update`s into the chat state (easy to unit test) |
 | `chat/AgentController.kt` | Owns a connection, exposes `StateFlow<ChatState>` to the UI |
 | `markdown/Markdown.kt`, `diff/LineDiff.kt` | Small Markdown parser, line-diff (longest common subsequence) |
+
+**`core/.../agent/`: the built-in agent (also plain Kotlin)**
+
+| File | What it does |
+| --- | --- |
+| `LocalAgent.kt` | The agent's half of ACP (`initialize`, `session/new`, `session/prompt`, ...) and `LocalTransport`, the in-memory pipe to the app |
+| `AgentSession.kt` | The agent loop: send the conversation to Claude, run the tools it asks for, repeat |
+| `ModelClient.kt`, `AnthropicModelClient.kt` | A small "model" interface, and its implementation on Anthropic's official Java SDK (the only file that uses the SDK) |
+| `Tool.kt`, `FileTools.kt`, `SearchTools.kt`, `ShellTool.kt` | The tools, each a small class with a JSON schema |
+| `Permissions.kt` | Which tool calls run, which ask first, which are refused, per mode |
+| `SystemPrompt.kt`, `SessionStore.kt` | The instructions the model gets; saving and reloading sessions |
+
+The agent's tests (`core/src/test/.../agent/`) run the real app-side client against the
+real agent with a scripted fake model, and the SDK adapter against a local fake API server.
 
 **`app/`: the Android app**
 
 | File | What it does |
 | --- | --- |
-| `DroidAcpApp.kt` | Application: holds the controller; wires it to the service, widget and notifications |
+| `DroidAcpApp.kt` | Application: holds the controller; picks the transport per agent; wires the controller to the service, widget and notifications |
+| `data/ProfileStore.kt`, `data/SecretBox.kt` | Saved agents, encrypted with a key in the Android Keystore |
 | `MainActivity.kt` | Screen navigation, image picking, connects UI actions to the controller |
 | `ui/*.kt` | Jetpack Compose screens (chat, composer, tool cards, dialogs, profiles, log) |
 | `service/AgentService.kt` | Foreground service that keeps the connection alive in the background |
@@ -135,6 +194,13 @@ DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :c
 - **Signing:** `keystore/droidacp-dev.jks` is a development key committed on purpose,
   so every build has the same signature and updates install cleanly. Before
   distributing the app to anyone, replace it with a private key kept out of git.
-- The app stores agent addresses and tokens in its private app storage.
-- DroidACP advertises no file-system or terminal capabilities to the agent, because
-  the agent runs on another machine and uses its own tools there.
+- **On-device agent:** it runs as the app, so it can touch what the app can touch.
+  With "All files access" granted that is all of shared storage, not just the project
+  folder. Edits outside the project folder always ask first, and in **Don't ask** mode
+  nothing asks, so use that mode with care.
+- Saved agents (addresses, tokens, API keys) are stored in the app's private storage,
+  encrypted with a key held in the Android Keystore.
+- For refusals by Anthropic's safety classifiers, the built-in agent turns on the API's
+  server-side fallback (a beta feature), which retries on another model.
+- DroidACP advertises no file-system or terminal capabilities to agents: a bridge
+  agent runs on another machine, and the built-in one has its own tools.

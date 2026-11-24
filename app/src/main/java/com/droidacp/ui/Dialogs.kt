@@ -160,7 +160,7 @@ fun SessionSettingsSheet(state: ChatState, actions: ChatActions, onDismiss: () -
             SelectionContainer {
                 Column {
                     InfoLine("Agent", listOfNotNull(state.agent?.displayName, state.agent?.version).joinToString(" "))
-                    InfoLine("Bridge", state.profile?.url ?: "")
+                    InfoLine(if (state.profile?.isLocal == true) "Runs" else "Bridge", state.profile?.address ?: "")
                     InfoLine("Folder", state.profile?.cwd ?: "")
                     InfoLine("Session", state.sessionId ?: "")
                 }

@@ -3,11 +3,15 @@ package com.droidacp
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import com.droidacp.core.acp.WebSocketTransport
+import com.droidacp.core.agent.LocalAgentConfig
+import com.droidacp.core.agent.LocalTransport
 import com.droidacp.core.chat.AgentController
 import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ConnectionStatus
+import com.droidacp.core.chat.TransportFactory
 import com.droidacp.data.ProfileStore
 import com.droidacp.service.AgentService
 import com.droidacp.service.Notifications
@@ -20,6 +24,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * The Application object lives as long as the app's process. It owns the single
@@ -40,11 +45,34 @@ class DroidAcpApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        controller = AgentController(appScope, WebSocketTransport.defaultClient(), BuildConfig.VERSION_NAME)
+        controller = AgentController(appScope, BuildConfig.VERSION_NAME, transportFactory())
         profiles = ProfileStore(this)
         Notifications.createChannels(this)
         registerActivityLifecycleCallbacks(ForegroundTracker())
         watchController()
+    }
+
+    /**
+     * Decides how to reach an agent: bridge agents over a WebSocket, the built-in
+     * agent through an in-memory pipe inside this process.
+     */
+    private fun transportFactory(): TransportFactory {
+        val http = WebSocketTransport.defaultClient()
+        val home = File(filesDir, "agent-home").apply { mkdirs() }
+        val localAgent = LocalAgentConfig(
+            sessionsDir = File(filesDir, "agent-sessions"),
+            platform = "Android ${Build.VERSION.RELEASE} (${Build.MANUFACTURER} ${Build.MODEL})",
+            version = BuildConfig.VERSION_NAME,
+            // Shell commands run as this app; give them somewhere of their own for HOME and temp files.
+            shellEnv = mapOf("HOME" to home.path, "TMPDIR" to cacheDir.path),
+        )
+        return TransportFactory { profile, listener ->
+            if (profile.isLocal) {
+                LocalTransport(listener, localAgent, profile.apiKey)
+            } else {
+                WebSocketTransport(http, profile.url, profile.token, listener)
+            }
+        }
     }
 
     @OptIn(FlowPreview::class)

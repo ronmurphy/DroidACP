@@ -6,6 +6,14 @@
 -dontwarn org.openjsse.**
 -dontwarn org.slf4j.**
 
+# The Anthropic SDK (used by the built-in agent) and Jackson, which it uses for JSON,
+# ship their own keep rules. These silence warnings about desktop-Java classes that
+# Jackson mentions but never needs on Android.
+-dontwarn java.beans.**
+-dontwarn org.w3c.dom.bootstrap.**
+-dontwarn javax.xml.stream.**
+-dontwarn javax.annotation.**
+
 # Keep line numbers so crash stack traces are readable.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

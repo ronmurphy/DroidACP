@@ -7,13 +7,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Saved agents, stored as JSON in private SharedPreferences.
- * (Only this app can read them. The bridge token is stored here too.)
+ * Saved agents, stored as JSON in private SharedPreferences. The list contains
+ * secrets (API keys, bridge tokens), so it is encrypted with [SecretBox] first.
  */
 class ProfileStore(context: Context) {
     private val prefs = context.getSharedPreferences("profiles", Context.MODE_PRIVATE)
 
-    private val _profiles = MutableStateFlow(Profile.listFromJson(prefs.getString(KEY_LIST, null)))
+    private val _profiles = MutableStateFlow(Profile.listFromJson(readList()))
     val profiles: StateFlow<List<Profile>> = _profiles.asStateFlow()
 
     fun get(id: String?): Profile? = _profiles.value.firstOrNull { it.id == id }
@@ -45,15 +45,31 @@ class ProfileStore(context: Context) {
         prefs.edit().putString(sessionKey(profileId), sessionId).apply()
     }
 
+    /** The encrypted list if there is one; otherwise the plain list older versions of the app saved. */
+    private fun readList(): String? =
+        prefs.getString(KEY_SEALED, null)?.let(SecretBox::decrypt) ?: prefs.getString(KEY_LIST, null)
+
     private fun persist(list: List<Profile>) {
         _profiles.value = list
-        prefs.edit().putString(KEY_LIST, Profile.listToJson(list)).apply()
+        val json = Profile.listToJson(list)
+        val sealed = SecretBox.encrypt(json)
+        prefs.edit().apply {
+            if (sealed != null) {
+                putString(KEY_SEALED, sealed)
+                remove(KEY_LIST)
+            } else {
+                // No usable Keystore on this device: fall back to app-private storage alone.
+                putString(KEY_LIST, json)
+                remove(KEY_SEALED)
+            }
+        }.apply()
     }
 
     private fun sessionKey(profileId: String) = "session:$profileId"
 
     private companion object {
         const val KEY_LIST = "list"
+        const val KEY_SEALED = "sealed"
         const val KEY_LAST = "last"
     }
 }
