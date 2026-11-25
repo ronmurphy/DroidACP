@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -33,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,6 +48,7 @@ import com.droidacp.core.acp.BridgeFolders
 import com.droidacp.core.chat.ChatBookmark
 import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatState
+import kotlinx.coroutines.launch
 
 /** Browsing the agent's computer for a folder: who to ask, and how. */
 data class FolderBrowse(val folders: BridgeFolders, val url: String, val token: String)
@@ -63,13 +66,19 @@ data class ChatsPanel(
 
 /**
  * The title bar's Chats panel: pick a folder, start a chat there, or open one of its
- * chats or a bookmarked one. Nothing changes until a chat is picked.
+ * chats or a bookmarked one. Nothing changes until a chat is picked. [onSwitch] runs a
+ * switch to another chat, asking first if the agent is working (switching stops it).
  */
 @Composable
-fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onDismiss: () -> Unit) {
+fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwitch: (() -> Unit) -> Unit, onDismiss: () -> Unit) {
     // The folder being looked at; the open chat's until another one is picked.
     var folder by rememberSaveable { mutableStateOf(state.folder ?: "") }
     var browsing by remember { mutableStateOf(false) }
+    // A bookmark being checked before it opens, and one found to be gone.
+    var checking by remember { mutableStateOf<String?>(null) }
+    var gone by remember { mutableStateOf<ChatBookmark?>(null) }
+    var checkFailed by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val isPlasma = state.plasmaLlm != null
 
     fun look(path: String) {
@@ -79,7 +88,25 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onDism
 
     fun openChat(sessionId: String, cwd: String?) {
         onDismiss()
-        actions.openChat(sessionId, cwd)
+        onSwitch { actions.openChat(sessionId, cwd) }
+    }
+
+    // A bookmarked chat may have been deleted since. Opening a chat that's gone makes
+    // PlasmaLLM start a new one on the computer (and close the one open there), so check
+    // the agent's list first. An agent that can't list chats just gets the open.
+    fun openBookmark(b: ChatBookmark) {
+        if (!state.capabilities.listSessions) return openChat(b.sessionId, b.cwd)
+        checking = b.sessionId
+        checkFailed = null
+        scope.launch {
+            val exists = actions.chatExists(b.sessionId, b.cwd)
+            checking = null
+            when (exists) {
+                true -> openChat(b.sessionId, b.cwd)
+                false -> gone = b
+                null -> checkFailed = b.sessionId
+            }
+        }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -116,7 +143,8 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onDism
             OutlinedButton(
                 onClick = {
                     onDismiss()
-                    actions.newChat(folder.ifBlank { null })
+                    val cwd = folder.ifBlank { null }
+                    onSwitch { actions.newChat(cwd) }
                 },
                 enabled = state.isConnected && !state.startingSession,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -139,23 +167,39 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onDism
                     items(panel.bookmarks, key = { "b:" + it.sessionId }) { b ->
                         val isOpen = b.sessionId == current
                         ListItem(
-                            leadingContent = { Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                            leadingContent = {
+                                if (checking == b.sessionId) {
+                                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                } else {
+                                    Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                }
+                            },
                             headlineContent = { Text(b.title ?: "Untitled chat", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             supportingContent = {
-                                Text(listOfNotNull(b.cwd.ifEmpty { null }?.let(::shortFolder), "open now".takeIf { isOpen }).joinToString(" · "))
+                                if (checkFailed == b.sessionId) {
+                                    Text("Couldn't check this chat is still there. Try again.", color = MaterialTheme.colorScheme.error)
+                                } else {
+                                    Text(listOfNotNull(b.cwd.ifEmpty { null }?.let(::shortFolder), "open now".takeIf { isOpen }).joinToString(" · "))
+                                }
                             },
                             trailingContent = {
                                 IconButton(onClick = { actions.removeBookmark(b.sessionId) }) {
                                     Icon(Icons.Default.Close, contentDescription = "Remove bookmark", Modifier.size(18.dp))
                                 }
                             },
-                            modifier = Modifier.clickable(enabled = !isOpen && state.canSwitchChats) { openChat(b.sessionId, b.cwd) },
+                            modifier = Modifier.clickable(enabled = !isOpen && checking == null && state.canSwitchChats) { openBookmark(b) },
                         )
                     }
                 }
 
                 item(key = "listed") {
                     SectionHeader(if (panel.showFolders && folder.isNotBlank()) "Chats in ${shortFolder(folder)}" else "Chats")
+                }
+                if (panel.browse != null && state.capabilities.listSessions) {
+                    // The list is Claude Code's, so it includes chats started in a terminal there.
+                    item(key = "terminal") {
+                        Hint("Don't open a chat that's still running in a terminal: two Claude processes would then work on the same chat.")
+                    }
                 }
                 // Only this folder's list: never another folder's under this one's name.
                 val listed = state.pastSessions.takeIf { folder.isBlank() || state.pastSessionsCwd == folder }
@@ -184,6 +228,26 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onDism
                 }
             }
         }
+    }
+
+    gone?.let { b ->
+        AlertDialog(
+            onDismissRequest = { gone = null },
+            title = { Text("That chat is gone") },
+            text = {
+                Text(
+                    "\"${b.title ?: "Untitled chat"}\" isn't in the agent's list for ${b.cwd.ifEmpty { "its folder" }} any more, " +
+                        "so it can't be opened. Remove the bookmark?",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    actions.removeBookmark(b.sessionId)
+                    gone = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { gone = null }) { Text("Keep") } },
+        )
     }
 
     val browse = panel.browse

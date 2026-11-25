@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -84,6 +85,9 @@ interface ChatActions {
     /** List [cwd]'s chats for the Chats panel (null: the open chat's folder). */
     fun listChats(cwd: String?)
     fun openChat(sessionId: String, cwd: String?)
+
+    /** Whether the agent still lists [sessionId] in [cwd] (null: it couldn't be checked). */
+    suspend fun chatExists(sessionId: String, cwd: String): Boolean?
     fun toggleBookmark(sessionId: String, cwd: String, title: String?)
     fun removeBookmark(sessionId: String)
     fun forgetFolder(path: String)
@@ -112,6 +116,12 @@ fun ChatScreen(
     fun openChats() {
         chatsOpen = true
         actions.listChats(state.folder)
+    }
+
+    // Switching to another chat while the agent works stops that work: ask first.
+    var pendingSwitch by remember { mutableStateOf<(() -> Unit)?>(null) }
+    fun switchChat(go: () -> Unit) {
+        if (state.busy) pendingSwitch = go else go()
     }
     val listState = rememberLazyListState()
     val follower = remember(listState) { EndFollower(listState) }
@@ -155,7 +165,7 @@ fun ChatScreen(
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             if (state.isConnected) {
-                                DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; actions.newChat(null) })
+                                DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; switchChat { actions.newChat(null) } })
                                 DropdownMenuItem(text = { Text("Chats and bookmarks") }, onClick = { menuOpen = false; openChats() })
                                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menuOpen = false; actions.disconnect() })
                             } else if (state.status !is ConnectionStatus.Connecting) {
@@ -227,7 +237,21 @@ fun ChatScreen(
         PermissionDialog(permission, tool?.call, onAnswer = { optionId -> actions.answerPermission(permission.requestId, optionId) })
     }
     if (settingsOpen) SessionSettingsSheet(state, actions, onDismiss = { settingsOpen = false })
-    if (chatsOpen) ChatsSheet(state, chats, actions, onDismiss = { chatsOpen = false })
+    if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = ::switchChat, onDismiss = { chatsOpen = false })
+    pendingSwitch?.let { go ->
+        AlertDialog(
+            onDismissRequest = { pendingSwitch = null },
+            title = { Text("Stop the agent's work?") },
+            text = { Text(stopWarning(state)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingSwitch = null
+                    go()
+                }) { Text("Stop and switch") }
+            },
+            dismissButton = { TextButton(onClick = { pendingSwitch = null }) { Text("Keep working") } },
+        )
+    }
 }
 
 private fun connectingText(state: ChatState): String {
@@ -239,6 +263,14 @@ private fun connectingText(state: ChatState): String {
         else -> "Connecting to ${p.url}…"
     }
 }
+
+private fun stopWarning(state: ChatState): String =
+    if (state.plasmaLlm != null) {
+        "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
+            "computer, and drops anything the agent planned to come back to in this chat (its wake_me)."
+    } else {
+        "${state.agentName} is working on this chat. Opening another one stops that work."
+    }
 
 private fun subtitle(state: ChatState): String {
     val status = state.status

@@ -218,6 +218,8 @@ class MainActivity : ComponentActivity() {
                     controller.openPastSession(sessionId, cwd)
                 }
 
+                override suspend fun chatExists(sessionId: String, cwd: String) = controller.chatExists(sessionId, cwd)
+
                 override fun toggleBookmark(sessionId: String, cwd: String, title: String?) {
                     val profileId = controller.state.value.profile?.id ?: return
                     app.bookmarks.toggle(profileId, ChatBookmark(sessionId, cwd, title, System.currentTimeMillis()))

@@ -209,6 +209,21 @@ class ChatSwitchTest {
     }
 
     @Test
+    fun aBookmarkIsCheckedInItsOwnFolderBeforeItOpens() = runBlocking {
+        val c = controller { saved["kept"] = "/home/me/other" to "Still here" }
+        c.connect(bridge)
+        c.open("s-1")
+
+        assertEquals(true, c.chatExists("kept", "/home/me/other"))
+        assertEquals("/home/me/other", agent.requests.last { it.first == "session/list" }.second.str("cwd"))
+        assertEquals(false, c.chatExists("deleted", "/home/me/other"), "a deleted chat isn't opened")
+        assertTrue(agent.requests.none { it.first == "session/load" }, "checking opens nothing")
+
+        agent.failList = true
+        assertNull(c.chatExists("kept", "/home/me/other"), "a failed check says so, rather than guessing")
+    }
+
+    @Test
     fun bookmarksToggleRetitleAndSurviveStorage() {
         val a = ChatBookmark("a", "/home/me/app", "Widget taps", 1)
         val b = ChatBookmark("b", "/home/me/other", null, 2)
@@ -252,6 +267,7 @@ class FakeAcpAgent(private val listener: TransportListener) : Transport {
     val saved = ConcurrentHashMap<String, Pair<String, String>>()
     var holdNew = false
     var holdList = false
+    var failList = false
     private var heldNew: JsonElement? = null
     private var heldList: Pair<JsonElement?, String?>? = null
     private val prompts = ConcurrentHashMap<String, JsonElement>()
@@ -354,7 +370,15 @@ class FakeAcpAgent(private val listener: TransportListener) : Transport {
                 put("authMethods", buildJsonArray {})
             })
             "session/new" -> if (holdNew) heldNew = id else replyNew(id)
-            "session/list" -> if (holdList) heldList = id to params.str("cwd") else replyList(id, params.str("cwd"))
+            "session/list" -> when {
+                failList -> deliver(buildJsonObject {
+                    put("jsonrpc", "2.0")
+                    put("id", id ?: JsonPrimitive(0))
+                    putJsonObject("error") { put("code", -32603); put("message", "listing failed") }
+                })
+                holdList -> heldList = id to params.str("cwd")
+                else -> replyList(id, params.str("cwd"))
+            }
             "session/prompt" -> prompts[params.str("sessionId") ?: ""] = id ?: JsonPrimitive(0)
             "session/cancel" -> {}
             else -> reply(id, JsonObject(emptyMap()))

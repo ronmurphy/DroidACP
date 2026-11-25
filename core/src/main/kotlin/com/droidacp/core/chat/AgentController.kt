@@ -220,6 +220,24 @@ class AgentController(
     }
 
     /**
+     * Whether [sessionId] is still in the agent's list for [cwd], checked before a
+     * bookmark opens: a chat that's gone makes PlasmaLLM start a new one on the computer,
+     * closing the one open there. Null when it couldn't be checked (the agent can't list
+     * chats, or the list failed).
+     */
+    suspend fun chatExists(sessionId: String, cwd: String): Boolean? {
+        val l = link ?: return null
+        if (!_state.value.capabilities.listSessions) return null
+        return try {
+            // More pages than the panel lists: an old bookmark may be far down a busy folder.
+            l.client.listSessions(cwd.trim().ifEmpty { null }, maxPages = 20).any { it.sessionId == sessionId }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
+        }
+    }
+
+    /**
      * Leaving the open chat for another: nothing of it may reach the next one. Its
      * permission questions are answered "cancelled" (PlasmaLLM ignores that answer, and
      * still asks on the computer), anything it still sends is ignored, and an agent that

@@ -133,7 +133,15 @@ answers the same `/droidacp/folders`). "New chat in this folder" is
 `session/new` with it; opening a listed chat is `session/load` with the chat's
 own `cwd`. Bookmarks (`core/.../chat/ChatBookmark.kt`, stored per saved agent by
 `app/.../data/BookmarkStore.kt`) keep the session id, folder and title, and the
-title follows the chat's `session_info_update`s.
+title follows the chat's (for PlasmaLLM, `_plasmallm/state`'s `title`; an empty
+one is ignored). Before a bookmark opens, `AgentController.chatExists` looks for
+it in the agent's `session/list` for its folder: a chat that's gone would make
+PlasmaLLM close the chat open on the computer and start a new one (see "Moving
+between chats" in PlasmaLLM's `docs/companion-protocol.md`). If it's gone, the
+panel offers to remove the bookmark. Switching while a turn runs asks first,
+since it stops the turn (for PlasmaLLM, even one started on the computer, and
+the old chat's `wake_me`). The panel also warns against opening a chat that's
+still running in a terminal, since the list is Claude Code's own.
 
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission
