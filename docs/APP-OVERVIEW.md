@@ -164,6 +164,17 @@ The answer (`AgentController.answerOpenElsewhere`) retries the load with
 all for "Try again". If the other Claude doesn't close, PlasmaLLM answers
 `close_failed`, and DroidACP asks again.
 
+PlasmaLLM 4 has tabs, each a project with its own agent, and devices follow
+the tab in front. Bringing another tab to the front ends the old tab's turn
+for devices only: `_plasmallm/turn` `ended` (`cancelled`) carries
+`stillRunning: true`, and so does the `_meta.plasmallm` of a device's own
+prompt answered `cancelled` for that reason (`PlasmaLlm.stillRunning`). DroidACP
+then shows no "Stopped." and posts no "finished" notification. The note about
+moving adds that the chat left is still working in its tab. Without the flag,
+"cancelled" keeps its old meaning: the turn stopped. Opening a chat from the
+Chats panel that's in a back tab brings that tab to the front, so the
+"Stop the agent's work?" question says so when PlasmaLLM speaks protocol 4.
+
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission
 questions are answered `cancelled`, its later `session/update`s, permission

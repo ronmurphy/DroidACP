@@ -343,9 +343,14 @@ class AgentController(
 
         l.scope.launch {
             var stopReason: String? = null
+            // PlasmaLLM's tabs: "cancelled" only because another tab came to the front. The turn
+            // goes on in its tab, so it neither "stopped" nor "finished".
+            var stillRunning = false
             try {
-                stopReason = l.client.prompt(sessionId, blocks)
-                Transcript.describeStopReason(stopReason)?.let { noteHere(it) }
+                val result = l.client.prompt(sessionId, blocks)
+                stopReason = result.stopReason
+                stillRunning = l.plasma && stopReason == "cancelled" && PlasmaLlm.stillRunning(result.meta)
+                if (!stillRunning) Transcript.describeStopReason(stopReason)?.let { noteHere(it) }
             } catch (e: RpcException) {
                 if (e.code == RpcErrorCodes.AUTH_REQUIRED && !l.plasma) {
                     _state.update { it.copy(authRequired = true) }
@@ -368,8 +373,9 @@ class AgentController(
                 // the user moved to another chat and started one there; leave those alone.
                 _state.update { if (it.remoteTurn || it.sessionId != sessionId) it else it.copy(busy = false, cancelling = false) }
             }
-            // Only report turns that really ended (not ones cut off by a dropped connection).
-            if (stopReason != null && l === link) {
+            // Only report turns that really ended (not ones cut off by a dropped connection, or
+            // still running in a PlasmaLLM tab).
+            if (stopReason != null && !stillRunning && l === link) {
                 val s2 = _state.value
                 _events.tryEmit(AgentEvent.TurnFinished(s2.agentName, stopReason, s2.lastAgentText, sessionId))
             }
@@ -517,6 +523,13 @@ class AgentController(
 
         /** Following the computer's chat failed this many times in a row; we stop trying after a few. */
         private var followFailures = 0
+
+        /**
+         * The chat on screen, and its title, when PlasmaLLM said its turn goes on in its tab
+         * while another tab came to the front: the note about moving says so.
+         */
+        @Volatile
+        private var leftRunning: Pair<String, String?>? = null
 
         /** Said once the computer's chat is shown again, after an open that didn't happen. */
         @Volatile
@@ -730,11 +743,14 @@ class AgentController(
                     // Leaving a chat on screen, not one that just failed to open (that says why itself).
                     // A message of ours on its way explains it too: PlasmaLLM refuses it ("wasn't sent").
                     var moved = false
+                    var stillWorking: Pair<String, String?>? = null
                     if (target.sessionId != _state.value.sessionId && followFailures < MAX_FOLLOW_FAILURES) {
                         _state.value.sessionId?.let {
                             left += it
                             moved = ownTurn == null
+                            stillWorking = leftRunning?.takeIf { r -> r.first == it }
                         }
+                        leftRunning = null
                         _state.update { resetSession(it, clearTranscript = true) }
                         openSession(target.sessionId, preferLoad = true, cwd = target.cwd)
                     }
@@ -744,7 +760,7 @@ class AgentController(
                         noteAfterFollow = null
                         _state.update { Transcript.addNote(it, shown, ChatItem.Severity.Warning) }
                     } else if (moved) {
-                        noteMoved(target.sessionId)
+                        noteMoved(target.sessionId, stillWorking)
                     }
                 }
                 // The computer may have moved on again while we were loading.
@@ -755,14 +771,18 @@ class AgentController(
         /**
          * The phone moved to [sessionId] because the computer did, from another chat it
          * showed: say so, or the chat seems to change by itself (another device may have
-         * opened it).
+         * opened it). [stillWorking] is the chat left (id and title) when its turn goes on
+         * in its PlasmaLLM tab.
          */
-        private fun noteMoved(sessionId: String) {
+        private fun noteMoved(sessionId: String, stillWorking: Pair<String, String?>? = null) {
             val s = _state.value
             if (s.sessionId != sessionId) return
             val title = host?.takeIf { it.sessionId == sessionId }?.title ?: s.sessionTitle
             val what = title?.let { "“$it”" } ?: "another chat"
-            _state.update { Transcript.addNote(it, "The computer is on $what now, so this screen moved there too.") }
+            val working = stillWorking?.let { (_, left) ->
+                " " + (left?.let { "“$it”" } ?: "The chat you were on") + " is still working in its tab."
+            } ?: ""
+            _state.update { Transcript.addNote(it, "The computer is on $what now, so this screen moved there too.$working") }
         }
 
         private fun needsFollow(): Boolean {
@@ -817,6 +837,16 @@ class AgentController(
                 // Our own prompt: sendPrompt already shows it as running.
                 if (ownTurn == turn.sessionId) return
                 _state.update { it.copy(busy = true, remoteTurn = true, cancelling = false) }
+                return
+            }
+            if (turn.stillRunning) {
+                // Another PlasmaLLM tab came to the front; this turn goes on in its tab, and the
+                // state naming the front tab's chat comes next. Not "Stopped.", not "finished":
+                // the note about moving says it's still working. Our own prompt in it is over for
+                // us now (it's answered "cancelled"), so the move isn't put down to a refusal.
+                leftRunning = turn.sessionId to s.sessionTitle
+                if (ownTurn == turn.sessionId) ownTurn = null
+                _state.update { it.copy(busy = false, remoteTurn = false, cancelling = false) }
                 return
             }
             // Our own turn ends with the session/prompt answer instead.

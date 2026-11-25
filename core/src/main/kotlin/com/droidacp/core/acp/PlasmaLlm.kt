@@ -103,6 +103,12 @@ object PlasmaLlm {
         putJsonObject("plasmallm") { put("protocol", PROTOCOL) }
     }
 
+    /**
+     * PlasmaLLM (protocol 4, tabs) answered a prompt `cancelled` only because another tab came
+     * to the front: the turn goes on in its tab, and this device stopped following it.
+     */
+    fun stillRunning(promptMeta: JsonObject?): Boolean = promptMeta?.obj("plasmallm")?.bool("stillRunning") == true
+
     /** The `_meta` of a load retried after [Reason.OPEN_ELSEWHERE]: what to do about the other Claude. */
     fun openElsewhereMeta(choice: String): JsonObject = buildJsonObject {
         putJsonObject("plasmallm") { put("openElsewhere", choice) }
@@ -200,8 +206,12 @@ sealed interface PlasmaEvent {
     /** PlasmaLLM's chat, folder, title or busy state changed. `sessionId` is empty for a moment while it switches. */
     data class State(val chat: PlasmaChat) : PlasmaEvent
 
-    /** A turn started or ended in [sessionId], whoever sent the prompt. */
-    data class Turn(val sessionId: String, val started: Boolean, val stopReason: String?) : PlasmaEvent
+    /**
+     * A turn started or ended in [sessionId], whoever sent the prompt. [stillRunning]: it
+     * "ended" (`cancelled`) only for devices, because another tab came to the front; it goes
+     * on in its tab (protocol 4).
+     */
+    data class Turn(val sessionId: String, val started: Boolean, val stopReason: String?, val stillRunning: Boolean = false) : PlasmaEvent
 
     /** A permission request this device was asked was answered elsewhere, or dropped. */
     data class PermissionResolved(val sessionId: String, val toolCallId: String) : PlasmaEvent
@@ -211,7 +221,12 @@ sealed interface PlasmaEvent {
             PlasmaLlm.STATE -> State(PlasmaChat.parse(params))
             PlasmaLlm.TURN -> when (params.str("state")) {
                 "started" -> Turn(params.str("sessionId") ?: "", started = true, stopReason = null)
-                "ended" -> Turn(params.str("sessionId") ?: "", started = false, stopReason = params.str("stopReason"))
+                "ended" -> Turn(
+                    params.str("sessionId") ?: "",
+                    started = false,
+                    stopReason = params.str("stopReason"),
+                    stillRunning = params.bool("stillRunning") ?: false,
+                )
                 else -> null
             }
             PlasmaLlm.PERMISSION_RESOLVED -> {

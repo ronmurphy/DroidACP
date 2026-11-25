@@ -144,14 +144,14 @@ class AcpClient(
         return all
     }
 
-    /** Send a user turn. Suspends until the agent finishes; returns the stop reason. */
-    suspend fun prompt(sessionId: String, blocks: List<JsonObject>): String {
+    /** Send a user turn. Suspends until the agent finishes; returns the stop reason and the result's `_meta`. */
+    suspend fun prompt(sessionId: String, blocks: List<JsonObject>): PromptResult {
         val params = buildJsonObject {
             put("sessionId", sessionId)
             put("prompt", JsonArray(blocks))
         }
         val result = rpc.request("session/prompt", params) as? JsonObject
-        return result?.str("stopReason") ?: "end_turn"
+        return PromptResult(result?.str("stopReason") ?: "end_turn", result?.obj("_meta"))
     }
 
     /** Ask the agent to stop the current turn. It answers the pending prompt with `cancelled`. */

@@ -311,13 +311,17 @@ private fun connectingText(state: ChatState): String {
     }
 }
 
-private fun stopWarning(state: ChatState): String =
-    if (state.plasmaLlm != null) {
-        "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
+private fun stopWarning(state: ChatState): String {
+    val plasma = state.plasmaLlm
+    return if (plasma != null) {
+        val stops = "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
             "computer, and drops anything the agent planned to come back to in this chat (its wake_me)."
+        // PlasmaLLM with tabs: a chat open in another tab comes to the front, and this one goes on in its own.
+        if (plasma.protocol >= 4) "$stops If the chat you open is in another PlasmaLLM tab, this one keeps working in its tab instead." else stops
     } else {
         "${state.agentName} is working on this chat. Opening another one stops that work."
     }
+}
 
 private fun subtitle(state: ChatState): String {
     val status = state.status

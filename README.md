@@ -165,8 +165,9 @@ Then:
 - **The phone follows the computer.** When PlasmaLLM opens another chat, so does the
   phone, with a note saying so (also when it finds the computer on another chat after a
   dropped connection). Opening a chat from the Chats panel here opens it on the computer
-  too. PlasmaLLM has one chat open at a time, so every phone and tablet joined to it
-  shows that chat.
+  too. Every phone and tablet joined to PlasmaLLM shows the same chat: the one open there,
+  or with PlasmaLLM's tabs, the tab in front. A turn in a tab left behind keeps working
+  there, and the note says so.
 - **Prompts typed on the computer show up here**, with the reply, and the chat shows
   as working. Stop works for them too.
 - **A permission prompt answered on the computer closes here**: the first answer counts.

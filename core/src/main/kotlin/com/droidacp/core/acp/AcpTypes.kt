@@ -142,6 +142,9 @@ sealed interface ConfigOption {
 }
 
 /** Everything the agent tells us when a session is created, loaded or resumed. */
+/** How a `session/prompt` ended: its stop reason, and the result's `_meta` (PlasmaLLM's `stillRunning`). */
+data class PromptResult(val stopReason: String, val meta: JsonObject?)
+
 data class SessionSetup(
     val sessionId: String,
     val modes: List<SessionMode>,

@@ -22,6 +22,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -347,8 +348,9 @@ class PlasmaLlmTest {
 
         // The user brings tab B to the front, mid-turn too. For the phone, A's turn ends (it goes
         // on in its tab); then the state names B as busy, before any "started" for it.
+        val events = scope.eventsOf(c)
         host.runningTurn = true
-        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "cancelled"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "cancelled", stillRunning = true))
         host.notify(PlasmaLlm.STATE, chatState("chat-b", "/home/me/b", title = "Tab B", busy = true))
 
         // B is loaded, and its "started" and question come then, as when joining any chat.
@@ -360,6 +362,49 @@ class PlasmaLlmTest {
         assertTrue(asked.items.none { it.text() == "Stopped." }, "A's end stays with A")
         assertEquals("/home/me/b", host.requests.last { it.first == "session/load" }.second.str("cwd"))
         assertTrue(b.remoteTurn)
+
+        // A didn't stop or finish: it goes on in its tab, and the note says so.
+        val note = c.waitFor("the note") { it.saysMoved() }.items.first { it.text().contains("so this screen moved") }.text()
+        assertEquals("The computer is on “Tab B” now, so this screen moved there too. “Open chat” is still working in its tab.", note)
+        assertTrue(events.none { it is AgentEvent.TurnFinished }, "events: $events")
+    }
+
+    @Test
+    fun ourPromptInATabLeftBehindIsntStoppedOrFinished() = runBlocking {
+        val c = controller { holdPrompts = true }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val events = scope.eventsOf(c)
+        assertTrue(c.sendPrompt("keep going"))
+        host.waitForRequests("session/prompt", 1)
+
+        // Tab B comes to the front: our prompt is answered "cancelled", still running.
+        host.answerPrompt(buildJsonObject {
+            put("stopReason", "cancelled")
+            putJsonObject("_meta") { putJsonObject("plasmallm") { put("stillRunning", true) } }
+        })
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "cancelled", stillRunning = true))
+        host.notify(PlasmaLlm.STATE, chatState("chat-b", "/home/me/b", title = "Tab B"))
+
+        val b = c.waitFor("chat b, with the note") { it.sessionId == "chat-b" && it.saysMoved() }
+        assertTrue(b.items.last().text().endsWith("“Open chat” is still working in its tab."), "items: ${b.items}")
+        assertFalse(b.busy)
+        delay(200)
+        assertTrue(c.state.value.items.none { it.text() == "Stopped." })
+        assertTrue(events.none { it is AgentEvent.TurnFinished }, "events: $events")
+    }
+
+    @Test
+    fun aRealStopStillSaysStopped() = runBlocking {
+        val c = controller { holdPrompts = true }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val events = scope.eventsOf(c)
+        assertTrue(c.sendPrompt("stop me"))
+        host.waitForRequests("session/prompt", 1)
+        host.answerPrompt(buildJsonObject { put("stopReason", "cancelled") })
+        c.waitFor("stopped") { st -> !st.busy && st.items.any { it.text() == "Stopped." } }
+        withTimeout(5_000) { while (events.none { it is AgentEvent.TurnFinished }) delay(10) }
     }
 
     @Test
@@ -459,11 +504,16 @@ class PlasmaLlmTest {
         put("busy", busy)
     }
 
-    private fun turn(sessionId: String, state: String, stopReason: String? = null) = buildJsonObject {
+    private fun turn(sessionId: String, state: String, stopReason: String? = null, stillRunning: Boolean = false) = buildJsonObject {
         put("sessionId", sessionId)
         put("state", state)
         if (stopReason != null) put("stopReason", stopReason)
+        if (stillRunning) put("stillRunning", true)
     }
+
+    /** Everything [c] reports from now on. */
+    private fun CoroutineScope.eventsOf(c: AgentController): List<AgentEvent> =
+        CopyOnWriteArrayList<AgentEvent>().also { list -> launch(start = CoroutineStart.UNDISPATCHED) { c.events.collect { list += it } } }
 
     private fun notOpenChat(open: String) = RpcError(
         -32602,
@@ -500,6 +550,14 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
 
     /** Chats the agent no longer lists: PlasmaLLM refuses them with `not_found` and stays put. */
     val goneChats = mutableSetOf<String>()
+
+    /** Prompts wait for [answerPrompt] instead of ending at once. */
+    @Volatile
+    var holdPrompts = false
+    private val heldPrompts = CopyOnWriteArrayList<JsonElement?>()
+
+    /** Answer the oldest held prompt with [result]. */
+    fun answerPrompt(result: JsonObject) = executor.execute { reply(heldPrompts.removeAt(0), result) }
 
     /** Chats another Claude has open, and its status ("idle" or "busy"): refused with `open_elsewhere`. */
     val elsewhere = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -664,6 +722,8 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
                     open = (e().data as? JsonObject)?.obj("plasmallm")?.str("sessionId") ?: open
                     state()
                     error(id, e())
+                } else if (holdPrompts) {
+                    heldPrompts += id
                 } else {
                     reply(id, buildJsonObject { put("stopReason", "end_turn") })
                 }
