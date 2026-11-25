@@ -1,10 +1,12 @@
 package com.droidacp
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -61,6 +63,13 @@ class MainActivity : ComponentActivity() {
     private val pickImages = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris -> addImages(uris) }
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    // The widget's mic button, when the chat is already on screen: what was heard goes in the message box.
+    private val listen = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (result.resultCode == RESULT_OK && !heard.isNullOrBlank()) draft.value = heard
+        focusRequests.intValue++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -92,6 +101,14 @@ class MainActivity : ComponentActivity() {
         }
         intent.getStringExtra(EXTRA_DRAFT)?.let { draft.value = it }
         openChatRequests.intValue++
+        if (intent.getBooleanExtra(QuickAskActivity.EXTRA_VOICE, false) && QuickAskActivity.canListen(this)) {
+            try {
+                listen.launch(QuickAskActivity.speechIntent("Ask ${app.controller.state.value.agentName}"))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // Fall back to typing.
+            }
+        }
         if (intent.getBooleanExtra(EXTRA_FOCUS_INPUT, false)) focusRequests.intValue++
     }
 

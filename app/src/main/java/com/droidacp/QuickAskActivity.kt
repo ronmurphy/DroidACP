@@ -87,13 +87,34 @@ class QuickAskActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null && app.isChatOnScreen) {
+            useTheApp(intent)
+            return
+        }
         if (savedInstanceState == null) start(intent)
         setContent { DroidAcpTheme { QuickAskBox() } }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        start(intent)
+        if (app.isChatOnScreen) useTheApp(intent) else start(intent)
+    }
+
+    /**
+     * The chat is already on screen (a floating window, or the other half of split screen),
+     * and could cover this box: some tablets keep floating windows above full-screen ones.
+     * Bring that window to the front with its message box ready instead.
+     */
+    private fun useTheApp(intent: Intent) {
+        val voice = intent.getBooleanExtra(EXTRA_VOICE, false)
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN_CHAT, true)
+                .putExtra(MainActivity.EXTRA_FOCUS_INPUT, true)
+                .putExtra(EXTRA_VOICE, voice),
+        )
+        finish()
     }
 
     // A box like this goes away when you leave it, like a dialog (but not while the recognizer listens).
@@ -112,12 +133,9 @@ class QuickAskActivity : ComponentActivity() {
     }
 
     private fun listen() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Ask ${app.controller.state.value.agentName}")
         try {
             listening = true
-            listen.launch(intent)
+            listen.launch(speechIntent("Ask ${app.controller.state.value.agentName}"))
         } catch (e: ActivityNotFoundException) {
             listening = false
             Toast.makeText(this, "No voice input on this device", Toast.LENGTH_SHORT).show()
@@ -288,6 +306,12 @@ class QuickAskActivity : ComponentActivity() {
                 .putExtra(EXTRA_VOICE, voice)
             return PendingIntent.getActivity(context, if (voice) 27 else 26, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         }
+
+        /** Asks Android's speech recognizer for one message; the text comes back in [RecognizerIntent.EXTRA_RESULTS]. */
+        fun speechIntent(prompt: String): Intent =
+            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
 
         @Volatile
         private var listenable: Boolean? = null

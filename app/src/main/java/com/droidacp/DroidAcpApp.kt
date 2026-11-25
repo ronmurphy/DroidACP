@@ -53,6 +53,11 @@ class DroidAcpApp : Application() {
     private var startedActivities = 0
     val isInForeground: Boolean get() = startedActivities > 0
 
+    // The chat screen's activity, on screen (also as a floating window that isn't focused).
+    @Volatile
+    private var startedMain = 0
+    val isChatOnScreen: Boolean get() = startedMain > 0
+
     override fun onCreate() {
         super.onCreate()
         controller = AgentController(appScope, BuildConfig.VERSION_NAME, transportFactory())
@@ -169,11 +174,13 @@ class DroidAcpApp : Application() {
     private inner class ForegroundTracker : ActivityLifecycleCallbacks {
         override fun onActivityStarted(activity: Activity) {
             startedActivities++
+            if (activity is MainActivity) startedMain++
             Notifications.clearEvents(this@DroidAcpApp)
         }
 
         override fun onActivityStopped(activity: Activity) {
             startedActivities--
+            if (activity is MainActivity) startedMain--
         }
 
         override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit

@@ -89,7 +89,10 @@ text field; the widget gets as close to the whole app as that allows:
   recognizer, when the device has one; the widget's mic button starts it straight
   away) and Send. It sends with `AgentController.sendReply`, like the notification's
   Reply, and closes; the reply arrives in the widget. When nothing is connected it
-  offers to connect to the last agent.
+  offers to connect to the last agent. If the chat is already on screen (a floating
+  window, or split screen), Ask and the mic bring that window to the front with its
+  message box ready instead: some tablets (ZUI) keep floating windows above the
+  full-screen box, which would hide it.
 
 `DroidAcpApp` redraws the widget about once a second from `ChatState`; the rows
 are saved, so the last chat stays on the home screen after the app is closed.
