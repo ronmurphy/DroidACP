@@ -60,7 +60,6 @@ import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.service.Notifications
 import com.droidacp.ui.DroidAcpTheme
-import com.droidacp.ui.folderOf
 
 /**
  * The widget's Ask: a small box over the home screen for one message, typed or spoken,
@@ -218,7 +217,7 @@ class QuickAskActivity : ComponentActivity() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            val where = state.sessionTitle ?: folderOf(state)
+                            val where = state.sessionTitle ?: state.folder
                             if (where != null && state.profile != null) {
                                 Text(where, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }

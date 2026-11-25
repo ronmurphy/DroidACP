@@ -16,6 +16,7 @@ import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.TransportFactory
+import com.droidacp.data.BookmarkStore
 import com.droidacp.data.FolderHistory
 import com.droidacp.data.ProfileStore
 import com.droidacp.service.AgentService
@@ -46,6 +47,10 @@ class DroidAcpApp : Application() {
     lateinit var folders: FolderHistory
         private set
 
+    /** Bookmarked chats, per agent. */
+    lateinit var bookmarks: BookmarkStore
+        private set
+
     /** Asks a bridge which folders its computer has, for the folder picker. */
     val bridgeFolders by lazy { BridgeFolders(WebSocketTransport.defaultClient()) }
 
@@ -63,6 +68,7 @@ class DroidAcpApp : Application() {
         controller = AgentController(appScope, BuildConfig.VERSION_NAME, transportFactory())
         profiles = ProfileStore(this)
         folders = FolderHistory(this)
+        bookmarks = BookmarkStore(this)
         Notifications.createChannels(this)
         registerActivityLifecycleCallbacks(ForegroundTracker())
         watchController()
@@ -100,7 +106,7 @@ class DroidAcpApp : Application() {
     /** Connect again to the agent used last time, and its last chat. False if there's none. */
     fun reconnectLast(): Boolean {
         val last = profiles.get(profiles.lastProfileId) ?: return false
-        controller.connect(last, resumeSessionId = profiles.lastSessionId(last.id))
+        controller.connect(last, resumeSessionId = profiles.lastSessionId(last.id), resumeCwd = profiles.lastSessionCwd(last.id))
         return true
     }
 
@@ -114,13 +120,23 @@ class DroidAcpApp : Application() {
                 .collect { live -> if (live) AgentService.start(this@DroidAcpApp) else AgentService.stop(this@DroidAcpApp) }
         }
 
-        // Remember each agent's latest session for "Continue last session".
+        // Remember each agent's latest session, and its folder, for "Continue last session".
         appScope.launch {
             controller.state
-                .map { it.profile?.id to it.sessionId }
+                .map { Triple(it.profile?.id, it.sessionId, it.sessionCwd) }
                 .distinctUntilChanged()
-                .collect { (profileId, sessionId) ->
-                    if (profileId != null && sessionId != null) profiles.setLastSessionId(profileId, sessionId)
+                .collect { (profileId, sessionId, cwd) ->
+                    if (profileId != null && sessionId != null) profiles.setLastSession(profileId, sessionId, cwd)
+                }
+        }
+
+        // A bookmarked chat's title follows the chat's own (the agent names chats as they go).
+        appScope.launch {
+            controller.state
+                .map { Triple(it.profile?.id, it.sessionId, it.sessionTitle) }
+                .distinctUntilChanged()
+                .collect { (profileId, sessionId, title) ->
+                    if (profileId != null && sessionId != null) bookmarks.retitle(profileId, sessionId, title)
                 }
         }
 

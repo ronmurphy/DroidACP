@@ -2,6 +2,7 @@
 
 package com.droidacp.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,9 +22,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,12 +56,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
@@ -73,9 +78,15 @@ interface ChatActions {
     fun removeAttachment(id: Long)
     fun setMode(modeId: String)
     fun setConfig(option: ConfigOption, value: Any)
-    fun newSession()
-    fun showHistory()
-    fun openSession(sessionId: String)
+    /** A new chat in [cwd], or else the open chat's folder. */
+    fun newChat(cwd: String?)
+
+    /** List [cwd]'s chats for the Chats panel (null: the open chat's folder). */
+    fun listChats(cwd: String?)
+    fun openChat(sessionId: String, cwd: String?)
+    fun toggleBookmark(sessionId: String, cwd: String, title: String?)
+    fun removeBookmark(sessionId: String)
+    fun forgetFolder(path: String)
     fun authenticate(methodId: String)
     fun answerPermission(requestId: Long, optionId: String?)
 
@@ -93,10 +104,15 @@ fun ChatScreen(
     attachments: List<AttachmentThumb>,
     focusRequest: Int,
     draft: String? = null,
+    chats: ChatsPanel = ChatsPanel(),
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
-    var historyOpen by rememberSaveable { mutableStateOf(false) }
+    var chatsOpen by rememberSaveable { mutableStateOf(false) }
+    fun openChats() {
+        chatsOpen = true
+        actions.listChats(state.folder)
+    }
     val listState = rememberLazyListState()
     val follower = remember(listState) { EndFollower(listState) }
     val scope = rememberCoroutineScope()
@@ -108,15 +124,27 @@ fun ChatScreen(
                     IconButton(onClick = actions::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 title = {
-                    Column {
-                        Text(state.agentName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            text = subtitle(state),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    // The title is the chat switcher: tap it for the Chats panel (folders, chats, bookmarks).
+                    val saved = ChatBookmarks.contains(chats.bookmarks, state.sessionId)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable(enabled = state.isConnected, onClickLabel = "Chats and bookmarks") { openChats() }
+                            .padding(end = 4.dp),
+                    ) {
+                        Column(Modifier.weight(1f, fill = false)) {
+                            Text(state.sessionTitle ?: state.agentName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                text = subtitle(state),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (saved) Icon(Icons.Default.Star, contentDescription = "Bookmarked", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp).size(16.dp))
+                        if (state.isConnected) Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                     }
                 },
                 actions = {
@@ -127,14 +155,8 @@ fun ChatScreen(
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             if (state.isConnected) {
-                                DropdownMenuItem(text = { Text("New session") }, onClick = { menuOpen = false; actions.newSession() })
-                                if (state.capabilities.listSessions) {
-                                    DropdownMenuItem(text = { Text("Session history") }, onClick = {
-                                        menuOpen = false
-                                        historyOpen = true
-                                        actions.showHistory()
-                                    })
-                                }
+                                DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; actions.newChat(null) })
+                                DropdownMenuItem(text = { Text("Chats and bookmarks") }, onClick = { menuOpen = false; openChats() })
                                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menuOpen = false; actions.disconnect() })
                             } else if (state.status !is ConnectionStatus.Connecting) {
                                 DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menuOpen = false; actions.reconnect() })
@@ -205,7 +227,7 @@ fun ChatScreen(
         PermissionDialog(permission, tool?.call, onAnswer = { optionId -> actions.answerPermission(permission.requestId, optionId) })
     }
     if (settingsOpen) SessionSettingsSheet(state, actions, onDismiss = { settingsOpen = false })
-    if (historyOpen) HistorySheet(state, onOpen = { id -> historyOpen = false; actions.openSession(id) }, onDismiss = { historyOpen = false })
+    if (chatsOpen) ChatsSheet(state, chats, actions, onDismiss = { chatsOpen = false })
 }
 
 private fun connectingText(state: ChatState): String {
@@ -218,13 +240,6 @@ private fun connectingText(state: ChatState): String {
     }
 }
 
-/**
- * The project folder. For PlasmaLLM it's the folder of the chat open there, as its
- * state says (the saved agent's folder is often empty: "whatever PlasmaLLM has open").
- */
-internal fun folderOf(state: ChatState): String? =
-    state.plasmaLlm?.chat?.cwd?.ifEmpty { null } ?: state.profile?.cwd?.ifEmpty { null }
-
 private fun subtitle(state: ChatState): String {
     val status = state.status
     return when {
@@ -236,7 +251,12 @@ private fun subtitle(state: ChatState): String {
         state.busy && state.remoteTurn -> "Working (sent from another screen)…"
         state.busy -> "Working…"
         state.startingSession -> "Starting session…"
-        else -> listOfNotNull(state.sessionTitle, state.currentModeName).joinToString(" · ").ifEmpty { folderOf(state) ?: "Ready" }
+        // The title line shows the chat; this one says where it is.
+        else -> listOfNotNull(
+            state.agentName.takeIf { state.sessionTitle != null },
+            state.folder?.let(::shortFolder),
+            state.currentModeName,
+        ).joinToString(" · ").ifEmpty { "Ready" }
     }
 }
 
@@ -314,7 +334,7 @@ private fun EmptyChat(state: ChatState) {
         Spacer(Modifier.height(8.dp))
         Text(
             listOfNotNull(
-                folderOf(state)?.let { "Working in $it" },
+                state.folder?.let { "Working in $it" },
                 "Type / to see the agent's commands.".takeIf { state.commands.isNotEmpty() },
             ).joinToString("\n"),
             textAlign = TextAlign.Center,
@@ -406,7 +426,7 @@ private fun AuthPanel(state: ChatState, actions: ChatActions) {
                     }
                 }
                 HorizontalDivider()
-                OutlinedButton(onClick = actions::newSession, enabled = !state.startingSession, modifier = Modifier.align(Alignment.End)) { Text("Retry") }
+                OutlinedButton(onClick = { actions.newChat(null) }, enabled = !state.startingSession, modifier = Modifier.align(Alignment.End)) { Text("Retry") }
             }
         }
     }

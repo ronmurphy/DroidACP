@@ -30,7 +30,7 @@ class ProfileStore(context: Context) {
 
     fun delete(id: String) {
         persist(_profiles.value.filterNot { it.id == id })
-        prefs.edit().remove(sessionKey(id)).apply()
+        prefs.edit().remove(sessionKey(id)).remove(folderKey(id)).apply()
         if (lastProfileId == id) lastProfileId = null
     }
 
@@ -41,8 +41,11 @@ class ProfileStore(context: Context) {
 
     fun lastSessionId(profileId: String): String? = prefs.getString(sessionKey(profileId), null)
 
-    fun setLastSessionId(profileId: String, sessionId: String) {
-        prefs.edit().putString(sessionKey(profileId), sessionId).apply()
+    /** The folder [lastSessionId] runs in, when the app knew it (it can be another than the agent's). */
+    fun lastSessionCwd(profileId: String): String? = prefs.getString(folderKey(profileId), null)?.ifEmpty { null }
+
+    fun setLastSession(profileId: String, sessionId: String, cwd: String?) {
+        prefs.edit().putString(sessionKey(profileId), sessionId).putString(folderKey(profileId), cwd ?: "").apply()
     }
 
     /** The encrypted list if there is one; otherwise the plain list older versions of the app saved. */
@@ -66,6 +69,8 @@ class ProfileStore(context: Context) {
     }
 
     private fun sessionKey(profileId: String) = "session:$profileId"
+
+    private fun folderKey(profileId: String) = "sessionCwd:$profileId"
 
     private companion object {
         const val KEY_LIST = "list"

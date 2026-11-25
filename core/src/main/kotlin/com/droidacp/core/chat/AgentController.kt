@@ -101,12 +101,20 @@ class AgentController(
      * PlasmaLLM is different: the phone is a second screen for the chat open on the
      * computer, so it always joins that chat (and [resumeSessionId] is ignored), unless
      * [startNew] asks for a new chat there.
+     *
+     * [resumeCwd] is the folder [resumeSessionId] runs in, when it isn't the profile's.
      */
-    fun connect(profile: Profile, resumeSessionId: String? = null, keepTranscript: Boolean = false, startNew: Boolean = false) {
+    fun connect(
+        profile: Profile,
+        resumeSessionId: String? = null,
+        keepTranscript: Boolean = false,
+        startNew: Boolean = false,
+        resumeCwd: String? = null,
+    ) {
         val old = link
         // When we keep our own transcript (reconnect), session/resume is enough; otherwise
         // prefer session/load so the agent replays the conversation for us.
-        val newLink = Link(profile, resumeSessionId, preferLoad = !keepTranscript, startNew = startNew)
+        val newLink = Link(profile, resumeSessionId, resumeCwd?.trim()?.ifEmpty { null }, preferLoad = !keepTranscript, startNew = startNew)
         link = newLink // set first, so the old link's close callback knows it's no longer current
         old?.shutdown()
         _state.update { old ->
@@ -121,6 +129,8 @@ class AgentController(
                 startingSession = false,
                 permissions = emptyList(),
                 pastSessions = null,
+                pastSessionsCwd = null,
+                pastSessionsError = null,
                 plasmaLlm = null,
                 sessionId = if (keepTranscript) base.sessionId else null,
             )
@@ -132,7 +142,7 @@ class AgentController(
     fun reconnect() {
         val s = _state.value
         val profile = s.profile ?: return
-        connect(profile, resumeSessionId = s.sessionId, keepTranscript = true)
+        connect(profile, resumeSessionId = s.sessionId, keepTranscript = true, resumeCwd = s.sessionCwd)
     }
 
     fun disconnect() {
@@ -149,42 +159,86 @@ class AgentController(
     // Sessions
     // ------------------------------------------------------------------
 
-    fun newSession() {
+    /**
+     * Start a new chat in [cwd], or else in the open chat's folder. For PlasmaLLM, no
+     * folder means the one open on the computer, which is the chat on screen's folder.
+     */
+    fun newSession(cwd: String? = null) {
         val l = link ?: return
-        if (_state.value.busy) cancelTurn()
+        val s = _state.value
+        if (s.busy) cancelTurn()
+        leave(l)
         _state.update { resetSession(it, clearTranscript = true) }
-        // PlasmaLLM: an empty folder means the one open on the computer, which is the
-        // chat on screen's folder; a new chat from here should stay there.
-        l.scope.launch { l.startSession(target = null, preferLoad = false, cwd = if (l.plasma) "" else l.profile.cwd) }
+        val folder = cwd?.trim()?.ifEmpty { null } ?: if (l.plasma) "" else s.sessionCwd?.ifEmpty { null } ?: l.profile.cwd
+        l.scope.launch { l.startSession(target = null, preferLoad = false, cwd = folder) }
     }
 
-    fun refreshPastSessions() {
+    /** List the chats in [cwd], or else in the open chat's folder. */
+    fun refreshPastSessions(cwd: String? = null) {
         val l = link ?: return
         if (!_state.value.capabilities.listSessions) return
-        _state.update { it.copy(loadingPastSessions = true) }
+        val folder = cwd?.trim()?.ifEmpty { null } ?: l.listCwd()
+        _state.update {
+            it.copy(
+                loadingPastSessions = true,
+                pastSessionsError = null,
+                // Another folder's chats must never show under this one's name, even for a moment.
+                pastSessions = if (it.pastSessionsCwd == folder) it.pastSessions else null,
+                pastSessionsCwd = folder,
+            )
+        }
         l.scope.launch {
             try {
-                val list = l.client.listSessions(l.listCwd())
-                _state.update { it.copy(pastSessions = list, loadingPastSessions = false) }
+                val list = l.client.listSessions(folder)
+                _state.update { if (it.pastSessionsCwd == folder) it.copy(pastSessions = list, loadingPastSessions = false) else it }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _state.update { Transcript.addNote(it.copy(loadingPastSessions = false), "Couldn't list sessions: ${e.message}", ChatItem.Severity.Warning) }
+                _state.update {
+                    if (it.pastSessionsCwd != folder) it else it.copy(loadingPastSessions = false, pastSessionsError = "Couldn't list the chats: ${e.message}")
+                }
             }
         }
     }
 
-    /** Open a session from the history list, showing its old messages if the agent supports `session/load`. */
-    fun openPastSession(sessionId: String) {
+    /**
+     * Open another chat, showing its old messages if the agent supports `session/load`.
+     * [cwd] is its folder (a bookmark knows it); otherwise the list's, else the open chat's.
+     */
+    fun openPastSession(sessionId: String, cwd: String? = null) {
         val l = link ?: return
         val s = _state.value
+        if (sessionId == s.sessionId) return
         // PlasmaLLM: pass the chat's own folder as the list gave it, so opening a chat
         // doesn't switch the computer to another folder by mistake.
-        val listed = s.pastSessions?.firstOrNull { it.sessionId == sessionId }?.cwd
-        val cwd = if (l.plasma) listed?.ifEmpty { null } ?: l.host?.cwd ?: "" else l.profile.cwd
+        val listed = cwd?.trim()?.ifEmpty { null } ?: s.pastSessions?.firstOrNull { it.sessionId == sessionId }?.cwd?.ifEmpty { null }
+        val folder = if (l.plasma) listed ?: l.host?.cwd ?: "" else listed ?: s.sessionCwd?.ifEmpty { null } ?: l.profile.cwd
         // PlasmaLLM: leaving a chat mid-turn is the computer's call (it answers "cancelled"); don't stop it from here.
         if (s.busy && !l.plasma) cancelTurn()
+        leave(l)
         _state.update { resetSession(it, clearTranscript = true) }
-        l.scope.launch { l.startSession(target = sessionId, preferLoad = true, cwd = cwd) }
+        l.scope.launch { l.startSession(target = sessionId, preferLoad = true, cwd = folder) }
+    }
+
+    /**
+     * Leaving the open chat for another: nothing of it may reach the next one. Its
+     * permission questions are answered "cancelled" (PlasmaLLM ignores that answer, and
+     * still asks on the computer), anything it still sends is ignored, and an agent that
+     * can close sessions is told to, so it frees what it holds. PlasmaLLM isn't: the
+     * chat stays open on the computer.
+     */
+    private fun leave(l: Link) {
+        val old = _state.value.sessionId ?: return
+        l.left += old
+        cancelAllPermissions()
+        if (l.plasma || !_state.value.capabilities.closeSession) return
+        l.scope.launch {
+            try {
+                l.client.closeSession(old)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                // The protocol log shows it; the next chat opens either way.
+            }
+        }
     }
 
     fun authenticate(methodId: String) {
@@ -194,7 +248,7 @@ class AgentController(
             try {
                 l.client.authenticate(methodId)
                 _state.update { it.copy(authRequired = false) }
-                l.startSession(target = l.resumeSessionId, preferLoad = l.preferLoad, cwd = l.profile.cwd)
+                l.startSession(target = l.resumeSessionId, preferLoad = l.preferLoad, cwd = l.startCwd)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _state.update { Transcript.addNote(it.copy(startingSession = false), "Sign-in failed: ${e.message}", ChatItem.Severity.Error) }
@@ -245,7 +299,7 @@ class AgentController(
         }
         val shown = images.map { ContentBlock.Image(it.mimeType, it.base64, null) }
         _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false) }
-        l.ownTurn = true
+        l.ownTurn = sessionId
 
         // Notes go to the chat the prompt was sent in; PlasmaLLM may have switched us to another by now.
         fun noteHere(text: String, severity: ChatItem.Severity = ChatItem.Severity.Info) =
@@ -273,9 +327,10 @@ class AgentController(
             } catch (e: ConnectionClosedException) {
                 // The close handler reports this.
             } finally {
-                l.ownTurn = false
-                // A turn started elsewhere may be running by now (after PlasmaLLM switched chats); leave that one alone.
-                _state.update { if (it.remoteTurn) it else it.copy(busy = false, cancelling = false) }
+                if (l.ownTurn == sessionId) l.ownTurn = null
+                // A turn started elsewhere may be running by now (after PlasmaLLM switched chats), or
+                // the user moved to another chat and started one there; leave those alone.
+                _state.update { if (it.remoteTurn || it.sessionId != sessionId) it else it.copy(busy = false, cancelling = false) }
             }
             // Only report turns that really ended (not ones cut off by a dropped connection).
             if (stopReason != null && l === link) {
@@ -390,6 +445,7 @@ class AgentController(
     private inner class Link(
         val profile: Profile,
         val resumeSessionId: String?,
+        val resumeCwd: String?,
         val preferLoad: Boolean,
         val startNew: Boolean,
     ) : TransportListener, AcpClientHandler {
@@ -403,6 +459,12 @@ class AgentController(
         /** One session/new, load or resume at a time (PlasmaLLM refuses a second one anyway). */
         private val sessionLock = Mutex()
 
+        /** The folder the first session opens in: [resumeSessionId]'s own, if we know it. */
+        val startCwd: String get() = if (resumeSessionId != null) resumeCwd ?: profile.cwd else profile.cwd
+
+        /** Chats the user left. Whatever they still send (late updates, permission questions) is ignored. */
+        val left: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
         // --- PlasmaLLM (see PlasmaLlm.kt) ---
 
         /** True once `initialize` showed the other end is PlasmaLLM, speaking a version we know. */
@@ -413,9 +475,9 @@ class AgentController(
         @Volatile
         var host: PlasmaChat? = null
 
-        /** A prompt we sent is running (so PlasmaLLM's turn notifications for it are ours, not remote). */
+        /** The chat a prompt we sent is running in (so PlasmaLLM's turn notifications for it are ours, not remote). */
         @Volatile
-        var ownTurn = false
+        var ownTurn: String? = null
 
         /** Following the computer's chat failed this many times in a row; we stop trying after a few. */
         private var followFailures = 0
@@ -502,7 +564,7 @@ class AgentController(
                     // PlasmaLLM: join the chat open on the computer (load gives us its history).
                     plasma && joined != null -> startSession(target = joined.sessionId, preferLoad = true, cwd = joined.cwd)
                     plasma -> startSession(target = null, preferLoad = false, cwd = profile.cwd)
-                    else -> startSession(resumeSessionId, preferLoad, cwd = profile.cwd)
+                    else -> startSession(resumeSessionId, preferLoad, cwd = startCwd)
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -513,8 +575,9 @@ class AgentController(
             }
         }
 
-        /** The folder to list past sessions for: PlasmaLLM's open folder, else the profile's. */
-        fun listCwd(): String = if (plasma) host?.cwd?.ifEmpty { null } ?: profile.cwd else profile.cwd
+        /** The folder to list past sessions for: PlasmaLLM's open folder, else the open chat's, else the profile's. */
+        fun listCwd(): String =
+            if (plasma) host?.cwd?.ifEmpty { null } ?: profile.cwd else _state.value.sessionCwd?.ifEmpty { null } ?: profile.cwd
 
         /**
          * Open a session. [target] null = new session. For an existing one,
@@ -526,6 +589,8 @@ class AgentController(
         }
 
         private suspend fun openSession(target: String?, preferLoad: Boolean, cwd: String) {
+            // Going back to a chat we left: its messages count again.
+            if (target != null) left.remove(target)
             val caps = _state.value.capabilities
             _state.update { it.copy(startingSession = true, authRequired = false) }
             try {
@@ -558,6 +623,7 @@ class AgentController(
                     it.copy(
                         sessionId = setup.sessionId,
                         sessionTitle = host?.takeIf { h -> plasma && h.sessionId == setup.sessionId }?.title ?: it.sessionTitle,
+                        sessionCwd = cwd.ifEmpty { null } ?: host?.cwd?.takeIf { plasma },
                         modes = setup.modes,
                         currentModeId = setup.currentModeId,
                         configOptions = setup.configOptions ?: it.configOptions,
@@ -601,6 +667,7 @@ class AgentController(
                 sessionLock.withLock {
                     val target = host ?: return@withLock
                     if (target.sessionId != _state.value.sessionId && followFailures < MAX_FOLLOW_FAILURES) {
+                        _state.value.sessionId?.let { left += it }
                         _state.update { resetSession(it, clearTranscript = true) }
                         openSession(target.sessionId, preferLoad = true, cwd = target.cwd)
                     }
@@ -622,7 +689,7 @@ class AgentController(
         // --- AcpClientHandler ---
 
         override fun onSessionUpdate(sessionId: String, update: SessionUpdate) {
-            if (!isCurrent) return
+            if (!isCurrent || sessionId in left) return
             _state.update { s ->
                 // Accept updates for our session, or before we know our session id (they can race the response).
                 if (s.sessionId == null || s.sessionId == sessionId) Transcript.apply(s, update) else s
@@ -661,9 +728,10 @@ class AgentController(
             // Only turns in the chat we show (or are opening). A turn "ended" for a chat the
             // computer just left is followed by a state for the new one.
             if (s.sessionId != null && s.sessionId != turn.sessionId) return
+            if (turn.sessionId in left) return
             if (turn.started) {
                 // Our own prompt: sendPrompt already shows it as running.
-                if (ownTurn) return
+                if (ownTurn == turn.sessionId) return
                 _state.update { it.copy(busy = true, remoteTurn = true, cancelling = false) }
                 return
             }
@@ -679,7 +747,8 @@ class AgentController(
         }
 
         override suspend fun requestPermission(request: PermissionRequest): PermissionOutcome {
-            if (!isCurrent) return PermissionOutcome(null)
+            // A question from a chat the user left must never show over the next one.
+            if (!isCurrent || request.sessionId in left) return PermissionOutcome(null)
             val id = nextPermissionId.getAndIncrement()
             val answer = CompletableDeferred<PermissionOutcome>()
             permissionWaiters[id] = answer

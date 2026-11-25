@@ -139,6 +139,13 @@ class CloudAgent(
                         }
                     }
                 }
+                "session/close" -> {
+                    // The app moved to another chat: stop what it's doing and forget it here. The
+                    // conversation stays on Anthropic's side, so it can be opened again.
+                    val session = sessions.remove(p.str("sessionId") ?: throw invalid("sessionId is required"))
+                    if (session != null) interrupt(session)
+                    JsonObject(emptyMap())
+                }
                 "session/prompt" -> prompt(session(p), p.objects("prompt"))
                 "session/set_mode" -> {
                     val mode = CloudMode.fromId(p.str("modeId")) ?: throw invalid("Unknown mode ${p.str("modeId")}")
@@ -159,7 +166,10 @@ class CloudAgent(
 
     private fun handleNotification(method: String, params: JsonElement?) {
         if (method != "session/cancel") return
-        val session = sessions[(params as? JsonObject)?.str("sessionId")] ?: return
+        interrupt(sessions[(params as? JsonObject)?.str("sessionId")] ?: return)
+    }
+
+    private fun interrupt(session: Session) {
         if (!session.running) return
         session.interrupted = true
         // "Stop" is itself an event. The turn ends when the session reports it is idle.
@@ -189,6 +199,7 @@ class CloudAgent(
             putJsonObject("sessionCapabilities") {
                 putJsonObject("list") {}
                 putJsonObject("resume") {}
+                putJsonObject("close") {}
             }
         }
         put("authMethods", buildJsonArray { })

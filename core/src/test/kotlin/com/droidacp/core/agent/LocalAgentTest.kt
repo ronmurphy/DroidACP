@@ -231,6 +231,30 @@ class LocalAgentTest {
     }
 
     @Test
+    fun aChatLeftForAnotherIsClosedAndOpensAgainFromItsSavedCopy() = runBlocking {
+        val model = FakeModel(listOf(FakeModel.say("first answer"), FakeModel.say("second answer")))
+        val controller = controller(model)
+
+        withTimeout(20_000) {
+            val ready = controller.connectAndWait()
+            assertTrue(ready.capabilities.closeSession)
+            val first = controller.promptAndWait("hello").sessionId!!
+
+            // Moving to a new chat closes the first: the agent lets go of it in memory.
+            controller.newSession()
+            val second = controller.state.first { it.canChat && it.sessionId != null && it.sessionId != first }
+            assertTrue(second.items.isEmpty())
+            assertEquals("second answer", controller.promptAndWait("again").lastAgentText)
+
+            // It's still saved, so it opens again with its history.
+            controller.openPastSession(first)
+            val back = controller.state.first { it.canChat && it.sessionId == first && it.lastAgentText == "first answer" }
+            assertTrue(back.items.none { it is ChatItem.Agent && it.text == "second answer" }, "nothing of the second chat: ${back.items}")
+            controller.disconnect()
+        }
+    }
+
+    @Test
     fun configOptionsChangeTheRequest() = runBlocking {
         val model = FakeModel(listOf(FakeModel.say("hi")))
         val controller = controller(model)

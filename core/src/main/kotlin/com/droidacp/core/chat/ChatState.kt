@@ -91,8 +91,14 @@ data class ChatState(
     val plans: Map<String, Plan> = emptyMap(),
     val usage: UsageInfo? = null,
     val permissions: List<PendingPermission> = emptyList(),
+    /** The folder the open chat runs in, as it was opened (the agent's own folder may differ for PlasmaLLM: see [folder]). */
+    val sessionCwd: String? = null,
     val pastSessions: List<SessionSummary>? = null,
+    /** The folder [pastSessions] lists (null: the open chat's). */
+    val pastSessionsCwd: String? = null,
     val loadingPastSessions: Boolean = false,
+    /** Why the last listing of [pastSessionsCwd] failed. */
+    val pastSessionsError: String? = null,
     /** Set when connected to PlasmaLLM: its version and the chat open there. */
     val plasmaLlm: PlasmaHello? = null,
     val nextKey: Long = 1,
@@ -101,6 +107,17 @@ data class ChatState(
     val canChat: Boolean get() = isConnected && sessionId != null && !startingSession
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
     val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"
+
+    /**
+     * The open chat's folder. For PlasmaLLM it's the folder open there, as its state
+     * says (the saved agent's folder is often empty: "whatever PlasmaLLM has open").
+     */
+    val folder: String?
+        get() = plasmaLlm?.chat?.cwd?.ifEmpty { null } ?: sessionCwd?.ifEmpty { null } ?: profile?.cwd?.ifEmpty { null }
+
+    /** Other chats can be opened: the agent can reopen one, or it's PlasmaLLM (which always can). */
+    val canSwitchChats: Boolean
+        get() = isConnected && (capabilities.loadSession || capabilities.resumeSession || plasmaLlm != null)
 
     /** Text of the most recent agent reply, for notifications and the widget. */
     val lastAgentText: String?

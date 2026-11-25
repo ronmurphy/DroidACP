@@ -119,10 +119,31 @@ current mode, config options (select and boolean), session info (title), usage
 
 **Sessions and resume:** tapping a saved agent continues its last session with
 `session/load`: the agent replays the conversation as `session/update`s and the
-app redraws it. The card's ⋮ menu has "Start a new session"; the chat menu has
-"New session" and a history list (`session/list`). If loading fails, the app
-starts a new session and says so. For a reconnect after a dropped connection the
-app keeps its own transcript and uses `session/resume` when the agent offers it.
+app redraws it, in the folder that chat runs in (saved with it, so it can be
+another than the agent's). The card's ⋮ menu has "Start a new session". If
+loading fails, the app starts a new session and says so. For a reconnect after a
+dropped connection the app keeps its own transcript and uses `session/resume`
+when the agent offers it.
+
+**The Chats panel** (`app/.../ui/ChatsSheet.kt`) opens from the chat's title,
+which shows the chat's name, the agent, its folder and mode, so it costs no
+space. It lists one folder's chats (`session/list` with that `cwd`); the folder
+comes from the ones used before or the bridge's folder browser (PlasmaLLM
+answers the same `/droidacp/folders`). "New chat in this folder" is
+`session/new` with it; opening a listed chat is `session/load` with the chat's
+own `cwd`. Bookmarks (`core/.../chat/ChatBookmark.kt`, stored per saved agent by
+`app/.../data/BookmarkStore.kt`) keep the session id, folder and title, and the
+title follows the chat's `session_info_update`s.
+
+Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
+is cancelled (not PlasmaLLM's, which is the computer's call), its permission
+questions are answered `cancelled`, its later `session/update`s, permission
+requests and PlasmaLLM turn notices are ignored (they can arrive while the next
+chat is still starting, before its id is known), and with
+`sessionCapabilities.close` the agent gets `session/close`. PlasmaLLM doesn't:
+its chats stay open on the computer. Both built-in agents support `close`, which
+stops the turn and drops the conversation from memory (it stays saved). Images
+picked for one chat are dropped too.
 
 Claude Code's adapter (`@agentclientprotocol/claude-agent-acp`, checked at
 v0.111) supports `loadSession`, `session/list`, `resume`, `close`, `fork` and
@@ -258,10 +279,11 @@ PlasmaLLM-style side panel on tablets.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~70 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~80 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
                                 # cloud), SDK adapters against a local fake server,
-                                # the PlasmaLLM companion against a fake PlasmaLLM
+                                # the PlasmaLLM companion against a fake PlasmaLLM,
+                                # moving between chats against a fake ACP agent
 node bridge/acp-bridge.js --port 18765 --token test -- node bridge/mock-agent.js &
 DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :core:test
                                 # adds end-to-end tests through the real bridge

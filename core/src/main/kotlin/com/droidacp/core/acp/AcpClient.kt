@@ -115,6 +115,14 @@ class AcpClient(
         return SessionSetup.parse(sessionId, result)
     }
 
+    /**
+     * Tell the agent we're done with a session, so it stops any work in it and frees
+     * what it holds for it. Only for agents with `sessionCapabilities.close`.
+     */
+    suspend fun closeSession(sessionId: String) {
+        rpc.request("session/close", buildJsonObject { put("sessionId", sessionId) })
+    }
+
     suspend fun listSessions(cwd: String?, maxPages: Int = 5): List<SessionSummary> {
         val all = mutableListOf<SessionSummary>()
         var cursor: String? = null

@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.core.chat.ChatBookmark
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ImageAttachment
 import com.droidacp.core.chat.Profile
@@ -34,6 +35,8 @@ import com.droidacp.ui.AndroidImageDecoder
 import com.droidacp.ui.AttachmentThumb
 import com.droidacp.ui.ChatActions
 import com.droidacp.ui.ChatScreen
+import com.droidacp.ui.ChatsPanel
+import com.droidacp.ui.FolderBrowse
 import com.droidacp.ui.DroidAcpTheme
 import com.droidacp.ui.ImagePreparer
 import com.droidacp.ui.LocalImageDecoder
@@ -115,13 +118,22 @@ class MainActivity : ComponentActivity() {
     private fun connect(profile: Profile, resume: String?, startNew: Boolean = false) {
         attachments.clear()
         app.profiles.lastProfileId = profile.id
-        app.controller.connect(profile, resumeSessionId = resume, startNew = startNew)
+        val cwd = if (resume != null) app.profiles.lastSessionCwd(profile.id) else null
+        app.controller.connect(profile, resumeSessionId = resume, startNew = startNew, resumeCwd = cwd)
+    }
+
+    /** Folders are remembered per kind of machine: PlasmaLLM runs on the same kind of computer as a bridge. */
+    private fun folderKind(profile: Profile?): ProfileKind? = when (profile?.kind) {
+        ProfileKind.Bridge, ProfileKind.PlasmaLlm -> ProfileKind.Bridge
+        ProfileKind.Local -> ProfileKind.Local
+        else -> null
     }
 
     /** Remove a saved agent, disconnecting first if it's the one connected. */
     private fun deleteAgent(profile: Profile) {
         if (app.controller.state.value.profile?.id == profile.id) app.controller.disconnect()
         app.profiles.delete(profile.id)
+        app.bookmarks.forgetAgent(profile.id)
     }
 
     private fun maybeAskForNotifications() {
@@ -150,6 +162,7 @@ class MainActivity : ComponentActivity() {
         val log by controller.log.collectAsStateWithLifecycle()
         val bridgeFolderHistory by app.folders.recent(ProfileKind.Bridge).collectAsStateWithLifecycle()
         val localFolderHistory by app.folders.recent(ProfileKind.Local).collectAsStateWithLifecycle()
+        val bookmarks by app.bookmarks.all.collectAsStateWithLifecycle()
 
         val startOnChat = state.status == ConnectionStatus.Connecting || state.status == ConnectionStatus.Connected
         var screen by rememberSaveable { mutableStateOf(if (startOnChat) Screen.Chat else Screen.Profiles) }
@@ -190,9 +203,39 @@ class MainActivity : ComponentActivity() {
 
                 override fun setMode(modeId: String) = controller.setMode(modeId)
                 override fun setConfig(option: ConfigOption, value: Any) = controller.setConfigOption(option, value)
-                override fun newSession() = controller.newSession()
-                override fun showHistory() = controller.refreshPastSessions()
-                override fun openSession(sessionId: String) = controller.openPastSession(sessionId)
+                override fun newChat(cwd: String?) {
+                    // Images picked for one chat never go to another.
+                    attachments.clear()
+                    rememberFolder(cwd)
+                    controller.newSession(cwd)
+                }
+
+                override fun listChats(cwd: String?) = controller.refreshPastSessions(cwd)
+
+                override fun openChat(sessionId: String, cwd: String?) {
+                    attachments.clear()
+                    rememberFolder(cwd)
+                    controller.openPastSession(sessionId, cwd)
+                }
+
+                override fun toggleBookmark(sessionId: String, cwd: String, title: String?) {
+                    val profileId = controller.state.value.profile?.id ?: return
+                    app.bookmarks.toggle(profileId, ChatBookmark(sessionId, cwd, title, System.currentTimeMillis()))
+                }
+
+                override fun removeBookmark(sessionId: String) {
+                    val profileId = controller.state.value.profile?.id ?: return
+                    app.bookmarks.remove(profileId, sessionId)
+                }
+
+                override fun forgetFolder(path: String) {
+                    folderKind(controller.state.value.profile)?.let { app.folders.forget(it, path) }
+                }
+
+                private fun rememberFolder(cwd: String?) {
+                    val kind = folderKind(controller.state.value.profile) ?: return
+                    if (!cwd.isNullOrBlank()) app.folders.remember(kind, cwd)
+                }
                 override fun authenticate(methodId: String) = controller.authenticate(methodId)
                 override fun answerPermission(requestId: Long, optionId: String?) = controller.answerPermission(requestId, optionId)
                 override fun reconnect() = controller.reconnect()
@@ -252,13 +295,30 @@ class MainActivity : ComponentActivity() {
                 },
             )
 
-            Screen.Chat -> ChatScreen(
-                state = state,
-                actions = chatActions,
-                attachments = attachments.map { AttachmentThumb(it.id, it.thumb) },
-                focusRequest = focusRequests.intValue,
-                draft = draft.value,
-            )
+            Screen.Chat -> {
+                val profile = state.profile
+                val kind = folderKind(profile)
+                ChatScreen(
+                    state = state,
+                    actions = chatActions,
+                    attachments = attachments.map { AttachmentThumb(it.id, it.thumb) },
+                    focusRequest = focusRequests.intValue,
+                    draft = draft.value,
+                    chats = ChatsPanel(
+                        bookmarks = profile?.let { bookmarks[it.id] }.orEmpty(),
+                        recentFolders = when (kind) {
+                            ProfileKind.Bridge -> bridgeFolderHistory
+                            ProfileKind.Local -> localFolderHistory
+                            else -> emptyList()
+                        },
+                        showFolders = kind != null,
+                        // The bridge and PlasmaLLM both answer the folder picker's questions (PlasmaLLM without a token).
+                        browse = profile?.takeIf { it.kind == ProfileKind.Bridge || it.isPlasmaLlm }?.let {
+                            FolderBrowse(app.bridgeFolders, it.connectUrl, if (it.isPlasmaLlm) "" else it.token)
+                        },
+                    ),
+                )
+            }
 
             Screen.Edit -> ProfileEditScreen(
                 initial = app.profiles.get(editingId),

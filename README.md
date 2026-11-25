@@ -92,7 +92,7 @@ What to know:
   or are blocked), **Ask first** (ask before commands and file changes), **Don't ask**.
 - Model, effort and web search are chosen under options and apply to the next new session.
 - Conversations are stored on Anthropic's side, so you can close the app mid-task and
-  reopen the session later from the history list.
+  reopen the session later from the Chats panel (tap the chat's title).
 - The first session creates an agent and an environment named "DroidACP" in your
   Anthropic account; they are reused afterwards. You can see sessions, with full
   traces and cost, in the Anthropic Console.
@@ -163,7 +163,7 @@ Then:
 - **Tapping the agent joins the chat open in PlasmaLLM**, whatever you had open here
   before. The menu's *Start a new chat on the computer* starts a new one there.
 - **The phone follows the computer.** When PlasmaLLM opens another chat, so does the
-  phone. Opening a chat from the history here opens it on the computer too.
+  phone. Opening a chat from the Chats panel here opens it on the computer too.
 - **Prompts typed on the computer show up here**, with the reply, and the chat shows
   as working. Stop works for them too.
 - **A permission prompt answered on the computer closes here**: the first answer counts.
@@ -189,7 +189,10 @@ computers without PlasmaLLM.
 - **Slash commands**: type `/` to see what the agent offers
 - **Images**: attach photos or screenshots when the agent supports them
 - **Managing saved agents**: each agent's ⋮ menu has *Edit*, *Copy and edit* (a new agent with the same settings, e.g. to point it at another folder; the original stays as it is) and *Delete* (asks first; only the saved settings go, not files or conversations)
-- **Session history**: tapping an agent continues your last conversation, replayed by the agent (`session/load`); start a new one from the agent's ⋮ menu or the chat menu, or reopen older ones from the history list (`session/list`)
+- **Chats, folders and bookmarks**: tapping an agent continues your last conversation, replayed by the agent (`session/load`). **Tap the chat's title** for the Chats panel:
+  - pick a folder (one you used before, or browse the computer), then start a new chat there or open one of its chats (`session/list`);
+  - bookmark a chat with ☆ to come back to it in one tap, from any folder;
+  - nothing of the chat you leave carries over: its permission questions are cancelled, anything it still sends is ignored, and the agent is told to close it (`session/close`, when it supports that) so it frees what it held. Each chat has its own context on the agent, and a chat you've left costs no tokens.
 - **Reconnect** after a dropped connection, continuing the session (`session/resume` / `session/load`)
 - **Stays connected in the background** (foreground service), and notifies you when
   the agent finishes or needs permission while you're in another app

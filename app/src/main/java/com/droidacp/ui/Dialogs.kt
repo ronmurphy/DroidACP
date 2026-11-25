@@ -4,7 +4,6 @@ package com.droidacp.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,18 +12,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -171,40 +166,8 @@ fun SessionSettingsSheet(state: ChatState, actions: ChatActions, onDismiss: () -
                     val plasma = state.plasmaLlm
                     InfoLine(if (state.profile?.kind == ProfileKind.Bridge) "Bridge" else "Runs", state.profile?.address ?: "")
                     if (plasma != null) InfoLine("PlasmaLLM", listOfNotNull(plasma.version, "companion protocol ${plasma.protocol}").joinToString(", "))
-                    InfoLine("Folder", folderOf(state) ?: "")
+                    InfoLine("Folder", state.folder ?: "")
                     InfoLine("Session", state.sessionId ?: "")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun HistorySheet(state: ChatState, onOpen: (String) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(bottom = 24.dp),
-        ) {
-            Text("Session history", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-            val past = state.pastSessions
-            when {
-                past == null -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                past.isEmpty() -> Text("No earlier sessions in this folder.", modifier = Modifier.padding(24.dp))
-                else -> LazyColumn(Modifier.heightIn(max = 520.dp)) {
-                    items(past, key = { it.sessionId }) { session ->
-                        val current = session.sessionId == state.sessionId
-                        ListItem(
-                            headlineContent = { Text(session.title ?: "Untitled session") },
-                            supportingContent = {
-                                Text(
-                                    listOfNotNull(session.updatedAt?.replace('T', ' ')?.take(16), if (current) "current" else null).joinToString(" · "),
-                                )
-                            },
-                            modifier = Modifier.clickable(enabled = !current) { onOpen(session.sessionId) },
-                        )
-                    }
                 }
             }
         }

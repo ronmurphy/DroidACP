@@ -100,6 +100,14 @@ class LocalAgent(
                 setup(session)
             }
             "session/list" -> buildJsonObject { put("sessions", JsonArray(store.list(p.str("cwd")))) }
+            "session/close" -> {
+                // The app moved to another chat: stop its turn and let go of the conversation held
+                // in memory. It stays saved, so it can be opened again.
+                val id = p.str("sessionId") ?: throw invalid("sessionId is required")
+                turns[id]?.cancel()
+                sessions.remove(id)
+                JsonObject(emptyMap())
+            }
             "session/prompt" -> prompt(session(p), p.objects("prompt"))
             "session/set_mode" -> {
                 val mode = AgentMode.fromId(p.str("modeId")) ?: throw invalid("Unknown mode ${p.str("modeId")}")
@@ -135,6 +143,7 @@ class LocalAgent(
             putJsonObject("sessionCapabilities") {
                 putJsonObject("list") {}
                 putJsonObject("resume") {}
+                putJsonObject("close") {}
             }
         }
         // No sign-in flow: the API key comes from the saved profile.
