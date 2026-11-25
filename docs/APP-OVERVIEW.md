@@ -273,8 +273,10 @@ set `DROIDACP_BRIDGE_CWD` to the folder PlasmaLLM has open.
 
 GitHub Actions runs both on every push, builds a signed release APK, and
 publishes it as a GitHub Release for pushes to `main` (`DroidACP-0.1.<run>.apk`).
-The signing key in `keystore/` is a development key, committed on purpose so
-updates install over each other.
+Releases are signed with a private key from the repo's secrets
+(`DROIDACP_RELEASE_KEYSTORE`, `DROIDACP_RELEASE_PASSWORD`); locally it comes from
+`~/.gradle/gradle.properties`. The key in `keystore/` is a public development key
+for debug builds only.
 
 ## Known gaps and good next steps
 

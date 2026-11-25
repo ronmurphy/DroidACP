@@ -275,7 +275,22 @@ Needs JDK 17 and the Android SDK (or just push and let GitHub Actions build it).
 ```sh
 ./gradlew :core:test          # protocol unit tests
 ./gradlew :app:assembleRelease  # APK in app/build/outputs/apk/release/
+./gradlew :app:assembleDebug    # debug APK, signed with the public dev key
 ```
+
+Release APKs are signed with a private key kept out of git. Put its four Gradle
+properties in `~/.gradle/gradle.properties`:
+
+```properties
+DROIDACP_RELEASE_STORE_FILE=/path/to/droidacp-release.jks
+DROIDACP_RELEASE_STORE_PASSWORD=...
+DROIDACP_RELEASE_KEY_ALIAS=droidacp
+DROIDACP_RELEASE_KEY_PASSWORD=...
+```
+
+Without them the release APK comes out unsigned. GitHub Actions gets the key from
+the repo's secrets `DROIDACP_RELEASE_KEYSTORE` (the keystore, base64) and
+`DROIDACP_RELEASE_PASSWORD`, and won't publish a release without them.
 
 End-to-end test against the real bridge:
 
@@ -289,9 +304,12 @@ DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :c
 - **Security:** anyone who can reach the bridge with the token can make the agent
   read, edit and run things on that computer. Keep the token private and use a
   private network.
-- **Signing:** `keystore/droidacp-dev.jks` is a development key committed on purpose,
-  so every build has the same signature and updates install cleanly. Before
-  distributing the app to anyone, replace it with a private key kept out of git.
+- **Signing:** releases are signed with a private key kept out of git (see "Build it
+  yourself"). Android only installs an update signed with the same key, and apps that
+  trust DroidACP (TabDesk's agent control) check it. `keystore/droidacp-dev.jks` is a
+  public development key, committed on purpose, for debug builds only. Releases before
+  25 November 2026 were signed with it; going from one of those to a newer release
+  means uninstalling DroidACP once.
 - **On-device agent:** it runs as the app, so it can touch what the app can touch.
   With "All files access" granted that is all of shared storage, not just the project
   folder. Edits outside the project folder always ask first, and in **Don't ask** mode

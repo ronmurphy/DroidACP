@@ -43,6 +43,25 @@ jobs:
             ./gradlew --no-daemon :core:test --tests '*BridgeIntegrationTest*' --rerun-tasks
           cat bridge.log
 
+      # The private release key lives in the repo's secrets, never in git:
+      # DROIDACP_RELEASE_KEYSTORE (the keystore, base64), DROIDACP_RELEASE_PASSWORD.
+      - name: Set up the release signing key
+        env:
+          KEYSTORE: ${{ secrets.DROIDACP_RELEASE_KEYSTORE }}
+          PASSWORD: ${{ secrets.DROIDACP_RELEASE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE" ] || [ -z "$PASSWORD" ]; then
+            echo "::error::The release signing key isn't in this repo's secrets, so the APK can't be signed."
+            exit 1
+          fi
+          echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          {
+            echo "ORG_GRADLE_PROJECT_DROIDACP_RELEASE_STORE_FILE=$RUNNER_TEMP/release.jks"
+            echo "ORG_GRADLE_PROJECT_DROIDACP_RELEASE_STORE_PASSWORD=$PASSWORD"
+            echo "ORG_GRADLE_PROJECT_DROIDACP_RELEASE_KEY_ALIAS=droidacp"
+            echo "ORG_GRADLE_PROJECT_DROIDACP_RELEASE_KEY_PASSWORD=$PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Build release APK
         run: ./gradlew --no-daemon :app:assembleRelease
 
@@ -75,3 +94,8 @@ jobs:
             **Install on Android:** tap the `.apk` below, then open it. The first time,
             Android asks you to allow installs from your browser.
             Newer builds install over older ones (same signing key).
+
+            Builds from 25 November 2026 on are signed with a new, private key. If
+            Android says the app can't be installed or isn't compatible, uninstall
+            the older DroidACP once, then install this one (saved agents need adding
+            again).
