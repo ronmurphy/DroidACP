@@ -26,7 +26,7 @@ differs.
 | **On a computer (bridge)** | Any ACP agent on a PC, started by `bridge/acp-bridge.js` | Whatever the agent uses, e.g. a Claude subscription in Claude Code | **Tested end to end** on a phone over Tailscale to CachyOS with Claude Code |
 | **On this device** | A coding agent built into the app (`core/.../agent/`) | The user's Anthropic API key | Unit-tested; **not yet tried on a device** |
 | **Cloud** | Claude Managed Agents: Anthropic hosts the agent loop and a Linux container per session (`core/.../cloud/`) | The user's Anthropic API key (tokens + container time) | Unit-tested against fakes; **not yet tried against the real service** |
-| **PlasmaLLM on a computer** | PlasmaLLM's own agent process; the phone is a second screen for the chat open there | Whatever PlasmaLLM's agent uses | PlasmaLLM's side tried with an unchanged DroidACP; DroidACP's companion side unit-tested against a fake PlasmaLLM (`PlasmaLlmTest`), **not yet tried on a device** |
+| **PlasmaLLM on a computer** | PlasmaLLM's own agent process; the phone is a second screen for the chat open there | Whatever PlasmaLLM's agent uses | PlasmaLLM's side tried with an unchanged DroidACP; DroidACP's companion side unit-tested against a fake PlasmaLLM (`PlasmaLlmTest`), and used every day on a phone and a tablet |
 | *(Termux)* | A bridge running inside Termux on the same phone | As for the bridge | Not a separate kind: a bridge profile pointing at `ws://127.0.0.1:8765` |
 
 Bridge mode is the main path for people without an API key. The two in-app
@@ -308,7 +308,7 @@ PlasmaLLM-style side panel on tablets.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~85 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~90 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
                                 # cloud), SDK adapters against a local fake server,
                                 # the PlasmaLLM companion against a fake PlasmaLLM,

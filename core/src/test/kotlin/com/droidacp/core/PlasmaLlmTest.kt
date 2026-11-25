@@ -148,10 +148,33 @@ class PlasmaLlmTest {
         host.notify(PlasmaLlm.STATE, chatState("chat-b", "/home/me/other", title = "Chat B"))
         val s = c.joined("chat-b")
         assertEquals("/home/me/other", host.requests.last { it.first == "session/load" }.second.str("cwd"))
-        assertEquals(listOf("from chat b"), c.waitFor("chat b's history") { it.items.isNotEmpty() }.items.map { it.text() })
+        // The history, then why the chat changed.
+        val shown = c.waitFor("chat b's history and the note") { st -> st.items.any { it is ChatItem.Note } }.items
+        assertEquals(listOf("from chat b", "The computer is on “Chat B” now, so this screen moved there too."), shown.map { it.text() })
         assertEquals("Chat B", s.sessionTitle)
         assertEquals("/home/me/other", s.plasmaLlm?.chat?.cwd, "the folder shown is the new chat's")
         assertEquals(2, host.requests.count { it.first == "session/load" }, "no load for the empty state")
+    }
+
+    @Test
+    fun backAfterADroppedConnectionSaysTheComputerMovedOn() = runBlocking {
+        // The second connection finds the computer on another chat.
+        val c = controller { if (hosts.size == 2) open = "chat-b" }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+
+        // Same chat after a drop: nothing to say.
+        host.close()
+        c.waitFor("the drop") { !it.isConnected }
+        c.reconnect()
+        assertFalse(c.joined("chat-a").saysMoved())
+
+        host.close()
+        c.waitFor("the second drop") { !it.isConnected }
+        c.reconnect()
+        c.joined("chat-b")
+        val moved = c.waitFor("the note") { it.saysMoved() }
+        assertEquals("The computer is on “Open chat” now, so this screen moved there too.", moved.items.last().text())
     }
 
     @Test
@@ -192,6 +215,7 @@ class PlasmaLlmTest {
             st.canChat && st.sessionId == "chat-a" && st.items.any { it is ChatItem.Note && "no longer exists" in it.text }
         }
         assertTrue(back.items.any { it.text() == "still chat a" })
+        assertFalse(back.saysMoved(), "the phone asked to leave; the computer didn't move")
         assertEquals(1, host.requests.count { it.first == "session/load" && it.second.str("sessionId") == "chat-gone" }, "the gone chat isn't asked for again")
         assertTrue(host.requests.none { it.first == "session/new" })
 
@@ -243,6 +267,8 @@ class PlasmaLlmTest {
         val b = c.joined("chat-b")
         assertTrue(b.items.any { it.text() == "from chat b" })
         assertNull(b.openElsewhere)
+        delay(100)
+        assertFalse(c.state.value.saysMoved(), "the phone opened it itself")
         assertEquals(listOf(null, null, "close"), loadsOf("chat-b").map { it.choice() })
         assertEquals("/home/me/other", loadsOf("chat-b").last().str("cwd"))
     }
@@ -395,8 +421,11 @@ class PlasmaLlmTest {
     private fun ChatItem.text(): String = when (this) {
         is ChatItem.User -> text
         is ChatItem.Agent -> text
+        is ChatItem.Note -> text
         else -> toString()
     }
+
+    private fun ChatState.saysMoved() = items.any { it is ChatItem.Note && "so this screen moved" in it.text }
 
     private fun chatState(sessionId: String, cwd: String, title: String? = null, busy: Boolean = false) = buildJsonObject {
         put("sessionId", sessionId)
@@ -456,7 +485,7 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     private var newChats = 0
     private var nextId = 1000L
     private var permissionId: Long? = null
-    private var open = "chat-a"
+    var open = "chat-a"
     private var openCwd = "/home/me/project"
 
     fun shutdownExecutor() = executor.shutdownNow()

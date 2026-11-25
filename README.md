@@ -163,7 +163,10 @@ Then:
 - **Tapping the agent joins the chat open in PlasmaLLM**, whatever you had open here
   before. The menu's *Start a new chat on the computer* starts a new one there.
 - **The phone follows the computer.** When PlasmaLLM opens another chat, so does the
-  phone. Opening a chat from the Chats panel here opens it on the computer too.
+  phone, with a note saying so (also when it finds the computer on another chat after a
+  dropped connection). Opening a chat from the Chats panel here opens it on the computer
+  too. PlasmaLLM has one chat open at a time, so every phone and tablet joined to it
+  shows that chat.
 - **Prompts typed on the computer show up here**, with the reply, and the chat shows
   as working. Stop works for them too.
 - **A permission prompt answered on the computer closes here**: the first answer counts.

@@ -603,7 +603,12 @@ class AgentController(
                     // PlasmaLLM: "Start a new session" makes a new chat on the computer.
                     plasma && startNew -> startSession(target = null, preferLoad = false, cwd = profile.cwd)
                     // PlasmaLLM: join the chat open on the computer (load gives us its history).
-                    plasma && joined != null -> startSession(target = joined.sessionId, preferLoad = true, cwd = joined.cwd)
+                    plasma && joined != null -> {
+                        // Back after a dropped connection, and the computer has moved on: say so.
+                        val shown = _state.value.sessionId
+                        startSession(target = joined.sessionId, preferLoad = true, cwd = joined.cwd)
+                        if (shown != null && shown != joined.sessionId) noteMoved(joined.sessionId)
+                    }
                     plasma -> startSession(target = null, preferLoad = false, cwd = profile.cwd)
                     else -> startSession(resumeSessionId, preferLoad, cwd = startCwd)
                 }
@@ -722,8 +727,14 @@ class AgentController(
             scope.launch {
                 sessionLock.withLock {
                     val target = host ?: return@withLock
+                    // Leaving a chat on screen, not one that just failed to open (that says why itself).
+                    // A message of ours on its way explains it too: PlasmaLLM refuses it ("wasn't sent").
+                    var moved = false
                     if (target.sessionId != _state.value.sessionId && followFailures < MAX_FOLLOW_FAILURES) {
-                        _state.value.sessionId?.let { left += it }
+                        _state.value.sessionId?.let {
+                            left += it
+                            moved = ownTurn == null
+                        }
                         _state.update { resetSession(it, clearTranscript = true) }
                         openSession(target.sessionId, preferLoad = true, cwd = target.cwd)
                     }
@@ -732,11 +743,26 @@ class AgentController(
                     if (shown != null && _state.value.sessionId == target.sessionId) {
                         noteAfterFollow = null
                         _state.update { Transcript.addNote(it, shown, ChatItem.Severity.Warning) }
+                    } else if (moved) {
+                        noteMoved(target.sessionId)
                     }
                 }
                 // The computer may have moved on again while we were loading.
                 if (needsFollow()) followHost()
             }
+        }
+
+        /**
+         * The phone moved to [sessionId] because the computer did, from another chat it
+         * showed: say so, or the chat seems to change by itself (another device may have
+         * opened it).
+         */
+        private fun noteMoved(sessionId: String) {
+            val s = _state.value
+            if (s.sessionId != sessionId) return
+            val title = host?.takeIf { it.sessionId == sessionId }?.title ?: s.sessionTitle
+            val what = title?.let { "“$it”" } ?: "another chat"
+            _state.update { Transcript.addNote(it, "The computer is on $what now, so this screen moved there too.") }
         }
 
         private fun needsFollow(): Boolean {
