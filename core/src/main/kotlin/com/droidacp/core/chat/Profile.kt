@@ -114,7 +114,23 @@ data class Profile(
     private fun isAbsolute(path: String): Boolean =
         path.startsWith("/") || Regex("^[A-Za-z]:[\\\\/].*").matches(path)
 
+    /**
+     * A copy to edit and save as another agent: the same settings (secrets included,
+     * they stay on this device) under a new [id] and a name no other agent has.
+     * Its last session isn't carried over; the copy starts fresh.
+     */
+    fun copyAsNew(id: String, takenNames: Collection<String>): Profile = copy(id = id, name = copyName(name, takenNames))
+
     companion object {
+        /** "Laptop" → "Laptop (copy)", then "Laptop (copy 2)", ...; copying a copy doesn't stack. */
+        fun copyName(name: String, takenNames: Collection<String>): String {
+            val stem = name.trim().replace(Regex("""\s*\(copy(?: \d+)?\)$"""), "").ifEmpty { "Agent" }
+            val taken = takenNames.map { it.trim().lowercase() }.toSet()
+            return generateSequence(1) { it + 1 }
+                .map { n -> if (n == 1) "$stem (copy)" else "$stem (copy $n)" }
+                .first { it.lowercase() !in taken }
+        }
+
         fun fromJson(o: JsonObject): Profile? {
             val kind = ProfileKind.fromId(o.str("kind"))
             val url = o.str("url") ?: ""

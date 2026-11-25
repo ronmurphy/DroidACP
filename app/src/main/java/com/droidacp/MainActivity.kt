@@ -101,6 +101,12 @@ class MainActivity : ComponentActivity() {
         app.controller.connect(profile, resumeSessionId = resume, startNew = startNew)
     }
 
+    /** Remove a saved agent, disconnecting first if it's the one connected. */
+    private fun deleteAgent(profile: Profile) {
+        if (app.controller.state.value.profile?.id == profile.id) app.controller.disconnect()
+        app.profiles.delete(profile.id)
+    }
+
     private fun maybeAskForNotifications() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || Notifications.canNotify(this)) return
         val prefs = getSharedPreferences("app", MODE_PRIVATE)
@@ -132,6 +138,8 @@ class MainActivity : ComponentActivity() {
         var screen by rememberSaveable { mutableStateOf(if (startOnChat) Screen.Chat else Screen.Profiles) }
         var logReturnTo by rememberSaveable { mutableStateOf(Screen.Profiles) }
         var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+        // "Copy and edit": the edit screen starts from a copy of editingId's agent and saves a new one.
+        var copying by rememberSaveable { mutableStateOf(false) }
 
         val openChat = openChatRequests.intValue
         LaunchedEffect(openChat) { if (openChat > 0) screen = Screen.Chat }
@@ -207,12 +215,20 @@ class MainActivity : ComponentActivity() {
                 onOpenChat = { screen = Screen.Chat },
                 onAdd = {
                     editingId = null
+                    copying = false
                     screen = Screen.Edit
                 },
                 onEdit = { p ->
                     editingId = p.id
+                    copying = false
                     screen = Screen.Edit
                 },
+                onCopy = { p ->
+                    editingId = p.id
+                    copying = true
+                    screen = Screen.Edit
+                },
+                onDelete = ::deleteAgent,
                 onOpenLog = {
                     logReturnTo = Screen.Profiles
                     screen = Screen.Log
@@ -229,6 +245,9 @@ class MainActivity : ComponentActivity() {
 
             Screen.Edit -> ProfileEditScreen(
                 initial = app.profiles.get(editingId),
+                copy = copying,
+                takenNames = profiles.map { it.name },
+                connected = !copying && editingId != null && state.profile?.id == editingId && state.status != ConnectionStatus.Disconnected,
                 recentFolders = { kind ->
                     when (kind) {
                         // PlasmaLLM runs on the same kind of computer as a bridge: share its folders.
@@ -249,8 +268,7 @@ class MainActivity : ComponentActivity() {
                     screen = Screen.Profiles
                 },
                 onDelete = { p ->
-                    if (state.profile?.id == p.id) controller.disconnect()
-                    app.profiles.delete(p.id)
+                    deleteAgent(p)
                     screen = Screen.Profiles
                 },
                 onBack = { screen = Screen.Profiles },

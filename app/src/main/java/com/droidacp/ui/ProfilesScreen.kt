@@ -35,18 +35,21 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -76,6 +79,7 @@ import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.data.StorageAccess
+import java.util.UUID
 
 /** Home screen: your saved agents. Tap one to connect. */
 @Composable
@@ -89,9 +93,13 @@ fun ProfilesScreen(
     onOpenChat: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (Profile) -> Unit,
+    onCopy: (Profile) -> Unit,
+    onDelete: (Profile) -> Unit,
     onOpenLog: () -> Unit,
 ) {
     var helpOpen by rememberSaveable { mutableStateOf(false) }
+    // The agent waiting for "Delete?" to be confirmed (its id, which rememberSaveable can keep).
+    var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -151,6 +159,8 @@ fun ProfilesScreen(
                             },
                             onNewSession = { onStartNew(profile) },
                             onEdit = { onEdit(profile) },
+                            onCopy = { onCopy(profile) },
+                            onDelete = { deletingId = profile.id },
                         )
                     }
                 }
@@ -165,6 +175,37 @@ fun ProfilesScreen(
             text = { Column(Modifier.verticalScroll(rememberScrollState())) { SetupHelp() } },
         )
     }
+    val deleting = profiles.firstOrNull { it.id == deletingId }
+    if (deleting != null) {
+        DeleteAgentDialog(
+            profile = deleting,
+            connected = state.profile?.id == deleting.id && state.status !is ConnectionStatus.Disconnected,
+            onConfirm = { deletingId = null; onDelete(deleting) },
+            onDismiss = { deletingId = null },
+        )
+    }
+}
+
+/** "Delete this agent?" Only the saved settings go; the agent's files and conversations stay where they are. */
+@Composable
+private fun DeleteAgentDialog(profile: Profile, connected: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+        title = { Text("Delete ${profile.name}?") },
+        text = {
+            Text(
+                "This removes the saved agent from this device. Its files and conversations are kept." +
+                    if (connected) " It's connected now, so it will be disconnected." else "",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Text("Delete")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -175,6 +216,8 @@ private fun ProfileCard(
     onClick: () -> Unit,
     onNewSession: () -> Unit,
     onEdit: () -> Unit,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     ElevatedCard(
@@ -218,6 +261,18 @@ private fun ProfileCard(
                         text = { Text("Edit") },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                         onClick = { menuOpen = false; onEdit() },
+                    )
+                    // A new agent with the same settings, to change e.g. the folder; this one stays as it is.
+                    DropdownMenuItem(
+                        text = { Text("Copy and edit") },
+                        leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                        onClick = { menuOpen = false; onCopy() },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = { menuOpen = false; onDelete() },
                     )
                 }
             }
@@ -280,6 +335,12 @@ fun SetupHelp() {
 @Composable
 fun ProfileEditScreen(
     initial: Profile?,
+    /** Start from a copy of [initial] and save it as a new agent ([initial] is left alone). */
+    copy: Boolean = false,
+    /** Names of the saved agents, so a copy gets a name of its own. */
+    takenNames: List<String> = emptyList(),
+    /** Whether [initial] is the agent connected now (deleting it disconnects). */
+    connected: Boolean = false,
     recentFolders: (ProfileKind) -> List<String>,
     onForgetFolder: (ProfileKind, String) -> Unit,
     bridgeFolders: BridgeFolders,
@@ -288,6 +349,13 @@ fun ProfileEditScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    // A copy gets its own id (kept across rotation) and name; the agent it came from isn't touched.
+    val copyId = rememberSaveable { UUID.randomUUID().toString() }
+    val source = initial
+    @Suppress("NAME_SHADOWING")
+    val initial = if (copy && source != null) source.copyAsNew(copyId, takenNames) else initial
+    // The saved agent this screen changes (none when adding, or making a copy).
+    val existing = initial.takeUnless { copy }
     // New agents start as "on this device"; it needs the least setup.
     // (Kept as the kind's id, a String, because that is something rememberSaveable can save.)
     var kindId by rememberSaveable { mutableStateOf((initial?.kind ?: ProfileKind.Local).id) }
@@ -351,9 +419,9 @@ fun ProfileEditScreen(
         topBar = {
             TopAppBar(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
-                title = { Text(if (initial == null) "Add agent" else "Edit agent") },
+                title = { Text(if (existing != null) "Edit agent" else if (source != null && copy) "Copy agent" else "Add agent") },
                 actions = {
-                    if (initial != null) {
+                    if (existing != null) {
                         IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
                     }
                 },
@@ -374,6 +442,17 @@ fun ProfileEditScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (copy && source != null) {
+                    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium) {
+                        Text(
+                            "A copy of ${source.name}, with the same settings. Change what you need, such as the folder or the name; " +
+                                "saving adds it as a new agent and leaves ${source.name} as it is.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
+                }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = local, onClick = { kindId = ProfileKind.Local.id }, label = { Text("On this device") })
                     FilterChip(selected = cloud, onClick = { kindId = ProfileKind.Cloud.id }, label = { Text("Cloud") })
@@ -571,13 +650,12 @@ fun ProfileEditScreen(
         )
     }
 
-    if (confirmDelete && initial != null) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete ${initial.name}?") },
-            text = { Text("This only removes the saved agent from this device. Files and saved conversations are kept.") },
-            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete(initial) }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+    if (confirmDelete && existing != null) {
+        DeleteAgentDialog(
+            profile = existing,
+            connected = connected,
+            onConfirm = { confirmDelete = false; onDelete(existing) },
+            onDismiss = { confirmDelete = false },
         )
     }
 }

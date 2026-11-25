@@ -188,6 +188,7 @@ computers without PlasmaLLM.
 - **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles)
 - **Slash commands**: type `/` to see what the agent offers
 - **Images**: attach photos or screenshots when the agent supports them
+- **Managing saved agents**: each agent's ⋮ menu has *Edit*, *Copy and edit* (a new agent with the same settings, e.g. to point it at another folder; the original stays as it is) and *Delete* (asks first; only the saved settings go, not files or conversations)
 - **Session history**: tapping an agent continues your last conversation, replayed by the agent (`session/load`); start a new one from the agent's ⋮ menu or the chat menu, or reopen older ones from the history list (`session/list`)
 - **Reconnect** after a dropped connection, continuing the session (`session/resume` / `session/load`)
 - **Stays connected in the background** (foreground service), and notifies you when
