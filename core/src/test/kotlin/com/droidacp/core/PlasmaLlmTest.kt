@@ -338,6 +338,31 @@ class PlasmaLlmTest {
     }
 
     @Test
+    fun aTabBroughtToTheFrontMidTurnIsJoinedMidTurn() = runBlocking {
+        val c = controller { history["chat-b"] = listOf(agentChunk("b so far")) }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        c.waitFor("a's turn") { it.busy && it.remoteTurn }
+
+        // The user brings tab B to the front, mid-turn too. For the phone, A's turn ends (it goes
+        // on in its tab); then the state names B as busy, before any "started" for it.
+        host.runningTurn = true
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "cancelled"))
+        host.notify(PlasmaLlm.STATE, chatState("chat-b", "/home/me/b", title = "Tab B", busy = true))
+
+        // B is loaded, and its "started" and question come then, as when joining any chat.
+        val b = c.waitFor("chat b, running") { it.sessionId == "chat-b" && it.canChat && it.busy && it.remoteTurn }
+        host.askPermission("chat-b", "tool-1")
+        val asked = c.waitFor("b's question") { it.permissions.isNotEmpty() }
+        assertEquals("chat-b", asked.sessionId)
+        assertTrue(asked.items.any { it.text() == "b so far" })
+        assertTrue(asked.items.none { it.text() == "Stopped." }, "A's end stays with A")
+        assertEquals("/home/me/b", host.requests.last { it.first == "session/load" }.second.str("cwd"))
+        assertTrue(b.remoteTurn)
+    }
+
+    @Test
     fun joiningMidTurnShowsItAsRunning() = runBlocking {
         val c = controller { runningTurn = true }
         c.connect(plasmaProfile)
