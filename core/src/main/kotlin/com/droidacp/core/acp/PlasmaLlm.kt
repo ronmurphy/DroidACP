@@ -39,6 +39,13 @@ object PlasmaLlm {
         const val BUSY = "busy"
         const val NO_CHAT = "no_chat"
         const val OPEN_FAILED = "open_failed"
+
+        /**
+         * A load or resume of a chat that isn't in the agent's list for that folder. The
+         * computer stays on its chat, and `sessionId` names the chat asked for, not one
+         * opened instead.
+         */
+        const val NOT_FOUND = "not_found"
         const val SIGN_IN_NEEDED = "sign_in_needed"
         const val AGENT_NOT_RUNNING = "agent_not_running"
         const val NO_FOLDER = "no_folder"

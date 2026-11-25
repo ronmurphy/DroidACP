@@ -138,7 +138,10 @@ one is ignored). Before a bookmark opens, `AgentController.chatExists` looks for
 it in the agent's `session/list` for its folder: a chat that's gone would make
 PlasmaLLM close the chat open on the computer and start a new one (see "Moving
 between chats" in PlasmaLLM's `docs/companion-protocol.md`). If it's gone, the
-panel offers to remove the bookmark. Switching while a turn runs asks first,
+panel offers to remove the bookmark. Newer PlasmaLLM builds also refuse such a
+load themselves (reason `not_found`, which names the chat asked for) and stay
+on their chat; DroidACP then shows that chat again with a note, and doesn't
+take the named chat for one PlasmaLLM opened instead. Switching while a turn runs asks first,
 since it stops the turn (for PlasmaLLM, even one started on the computer, and
 the old chat's `wake_me`). The panel also warns against opening a chat that's
 still running in a terminal, since the list is Claude Code's own.

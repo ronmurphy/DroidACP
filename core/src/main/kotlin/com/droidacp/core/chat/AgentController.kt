@@ -500,6 +500,10 @@ class AgentController(
         /** Following the computer's chat failed this many times in a row; we stop trying after a few. */
         private var followFailures = 0
 
+        /** Said once the computer's chat is shown again, after an open that didn't happen. */
+        @Volatile
+        private var noteAfterFollow: String? = null
+
         /** Permission requests waiting here, by tool call, so `_plasmallm/permission_resolved` can close them. */
         private val permissionTools = ConcurrentHashMap<Long, String>()
 
@@ -651,6 +655,12 @@ class AgentController(
             } catch (e: RpcException) {
                 if (e.code == RpcErrorCodes.AUTH_REQUIRED && !plasma) {
                     _state.update { it.copy(authRequired = true, sessionId = null) }
+                } else if (plasma && e.plasmaReason == PlasmaLlm.Reason.NOT_FOUND) {
+                    // The chat is gone, and PlasmaLLM stayed on the chat it had open: show that one
+                    // again (followHost, below). The error names the chat asked for, not one opened
+                    // instead, so it isn't followed, and it isn't a failure to follow the computer.
+                    _state.update { resetSession(it, clearTranscript = false) }
+                    noteAfterFollow = "That chat no longer exists, so PlasmaLLM stayed on this one."
                 } else if (plasma) {
                     // No fallback to a new chat here: PlasmaLLM has already opened one if it
                     // could (the error names it, and _plasmallm/state announces it); we follow that.
@@ -690,8 +700,10 @@ class AgentController(
                         openSession(target.sessionId, preferLoad = true, cwd = target.cwd)
                     }
                     // Also when a state notification got us there first.
-                    if (note != null && _state.value.sessionId == target.sessionId) {
-                        _state.update { Transcript.addNote(it, note, ChatItem.Severity.Warning) }
+                    val shown = note ?: noteAfterFollow
+                    if (shown != null && _state.value.sessionId == target.sessionId) {
+                        noteAfterFollow = null
+                        _state.update { Transcript.addNote(it, shown, ChatItem.Severity.Warning) }
                     }
                 }
                 // The computer may have moved on again while we were loading.

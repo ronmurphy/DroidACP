@@ -174,6 +174,30 @@ class PlasmaLlmTest {
         assertTrue(host.requests.none { it.first == "session/new" }, "no new chat of our own: PlasmaLLM made one")
     }
 
+    @Test
+    fun aChatThatsGoneLeavesThePhoneOnTheComputersChat() = runBlocking {
+        val c = controller {
+            goneChats += "chat-gone"
+            history["chat-a"] = listOf(agentChunk("still chat a"))
+            history["chat-b"] = listOf(agentChunk("from chat b"))
+        }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        c.openPastSession("chat-gone")
+
+        // PlasmaLLM stayed on chat-a, so the phone shows it again, saying why.
+        val back = c.waitFor("chat a again, with the note") { st ->
+            st.canChat && st.sessionId == "chat-a" && st.items.any { it is ChatItem.Note && "no longer exists" in it.text }
+        }
+        assertTrue(back.items.any { it.text() == "still chat a" })
+        assertEquals(1, host.requests.count { it.first == "session/load" && it.second.str("sessionId") == "chat-gone" }, "the gone chat isn't asked for again")
+        assertTrue(host.requests.none { it.first == "session/new" })
+
+        // And it still follows the computer afterwards.
+        host.notify(PlasmaLlm.STATE, chatState("chat-b", "/home/me/project"))
+        assertEquals("chat-b", c.joined("chat-b").sessionId)
+    }
+
     // --- turns sent from the computer ---
 
     @Test
@@ -340,6 +364,9 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     var runningTurn = false
     val history = mutableMapOf<String, List<JsonObject>>()
     val failLoads = mutableSetOf<String>()
+
+    /** Chats the agent no longer lists: PlasmaLLM refuses them with `not_found` and stays put. */
+    val goneChats = mutableSetOf<String>()
     var promptError: (() -> RpcError)? = null
     val permissionReply = kotlinx.coroutines.CompletableDeferred<JsonObject>()
     private var newChats = 0
@@ -441,6 +468,12 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
             }
             "session/load" -> {
                 val sessionId = params.str("sessionId") ?: ""
+                if (sessionId in goneChats) {
+                    error(id, RpcError(-32602, "That chat no longer exists", buildJsonObject {
+                        putJsonObject("plasmallm") { put("reason", "not_found"); put("sessionId", sessionId) }
+                    }))
+                    return
+                }
                 if (sessionId in failLoads) {
                     open = "new-${++newChats}"
                     state()
