@@ -46,6 +46,17 @@ object PlasmaLlm {
          * opened instead.
          */
         const val NOT_FOUND = "not_found"
+
+        /**
+         * A load or resume of a chat another Claude on the computer has open (in a terminal,
+         * say). The computer stays on its chat, which `sessionId` names; `requested` is the
+         * chat asked for, and `elsewhere` says where it's open. Retried with
+         * [openElsewhereMeta], it closes that Claude first or opens the chat anyway.
+         */
+        const val OPEN_ELSEWHERE = "open_elsewhere"
+
+        /** The retry said "close", and the other Claude didn't. Same data as [OPEN_ELSEWHERE]. */
+        const val CLOSE_FAILED = "close_failed"
         const val SIGN_IN_NEEDED = "sign_in_needed"
         const val AGENT_NOT_RUNNING = "agent_not_running"
         const val NO_FOLDER = "no_folder"
@@ -90,6 +101,73 @@ object PlasmaLlm {
     /** The `_meta` of DroidACP's `initialize` params: "I am a companion, speaking this version." */
     fun initializeMeta(): JsonObject = buildJsonObject {
         putJsonObject("plasmallm") { put("protocol", PROTOCOL) }
+    }
+
+    /** The `_meta` of a load retried after [Reason.OPEN_ELSEWHERE]: what to do about the other Claude. */
+    fun openElsewhereMeta(choice: String): JsonObject = buildJsonObject {
+        putJsonObject("plasmallm") { put("openElsewhere", choice) }
+    }
+}
+
+/** What the user chose to do about a chat another Claude has open ([PlasmaLlm.Reason.OPEN_ELSEWHERE]). */
+enum class OpenElsewhereChoice(val wire: String?) {
+    /** End the other Claude (PlasmaLLM does, only while it's idle), then open the chat here. */
+    CLOSE("close"),
+
+    /** Open it here too: two Claudes on one chat, each blind to what the other says. */
+    ANYWAY("anyway"),
+
+    /** Ask again as before, e.g. once the other Claude has finished its work. */
+    RETRY(null),
+}
+
+/**
+ * PlasmaLLM didn't open [sessionId] (in [cwd]) because another Claude has it open, or
+ * ([closeFailed]) because it was asked to close that Claude and it didn't. The computer
+ * stayed on its own chat.
+ */
+data class OpenElsewhere(
+    val sessionId: String,
+    val cwd: String,
+    /** The other Claude's name, as other sessions see it ("DroidACP"). */
+    val name: String?,
+    /** It's working, so it can't be closed, and opening the chat here too would fork it. */
+    val busy: Boolean,
+    val tmuxWindow: String?,
+    /** The Claude app can reach it too (it runs with Remote Control). */
+    val remoteControl: Boolean,
+    val closeFailed: Boolean,
+) {
+    /** "“DroidACP” has this chat open in tmux window 3", and what's going on there, in words for the user. */
+    val summary: String
+        get() {
+            val who = name?.let { "“$it”" } ?: "Another Claude"
+            val place = tmuxWindow?.let { "in tmux window $it" } ?: "on the computer"
+            val app = if (remoteControl) " The Claude app can reach it too." else ""
+            return when {
+                closeFailed -> "$who ($place) didn't close. Close it there (/exit), then try again."
+                busy -> "$who has this chat open $place, and it's working right now. Try again when it's finished.$app"
+                else -> "$who has this chat open $place, and it's idle.$app"
+            }
+        }
+
+    companion object {
+        /** Null unless [e] is PlasmaLLM's open_elsewhere or close_failed. */
+        fun parse(e: RpcException, sessionId: String, cwd: String): OpenElsewhere? {
+            val p = (e.data as? JsonObject)?.obj("plasmallm") ?: return null
+            val reason = p.str("reason")
+            if (reason != PlasmaLlm.Reason.OPEN_ELSEWHERE && reason != PlasmaLlm.Reason.CLOSE_FAILED) return null
+            val where = p.obj("elsewhere")
+            return OpenElsewhere(
+                sessionId = p.str("requested")?.ifEmpty { null } ?: sessionId,
+                cwd = cwd,
+                name = where?.str("name")?.ifBlank { null },
+                busy = where?.str("status") == "busy",
+                tmuxWindow = where?.str("tmuxWindow")?.ifBlank { null },
+                remoteControl = where?.bool("remoteControl") ?: false,
+                closeFailed = reason == PlasmaLlm.Reason.CLOSE_FAILED,
+            )
+        }
     }
 }
 

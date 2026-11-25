@@ -7,6 +7,7 @@ import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.Implementation
 import com.droidacp.core.acp.PermissionOption
+import com.droidacp.core.acp.OpenElsewhere
 import com.droidacp.core.acp.PlasmaHello
 import com.droidacp.core.acp.Plan
 import com.droidacp.core.acp.SessionMode
@@ -101,6 +102,8 @@ data class ChatState(
     val pastSessionsError: String? = null,
     /** Set when connected to PlasmaLLM: its version and the chat open there. */
     val plasmaLlm: PlasmaHello? = null,
+    /** PlasmaLLM didn't open a chat another Claude has open; the user is asked what to do. */
+    val openElsewhere: OpenElsewhere? = null,
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected

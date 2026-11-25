@@ -146,6 +146,24 @@ since it stops the turn (for PlasmaLLM, even one started on the computer, and
 the old chat's `wake_me`). The panel also warns against opening a chat that's
 still running in a terminal, since the list is Claude Code's own.
 
+PlasmaLLM (protocol 3) also refuses to open a chat another Claude has open, a
+terminal one say, with reason `open_elsewhere` (or `close_failed`, below). It
+stays on its chat, which the error's `sessionId` names, so older DroidACP
+builds just show that chat again. The error's `requested` is the chat asked
+for, and `elsewhere` gives the other Claude's name, whether it's idle or busy,
+its tmux window, and whether the Claude app can reach it (`OpenElsewhere` in
+`PlasmaLlm.kt`). DroidACP shows the computer's chat again, and asks
+(`OpenElsewhereDialog` in `ChatScreen.kt`):
+- while that Claude is idle: "Close that one and open here", "Open here
+  anyway" or "Cancel";
+- while it's busy: only "Try again" or "OK", since closing it is refused and a
+  second Claude would fork the chat.
+
+The answer (`AgentController.answerOpenElsewhere`) retries the load with
+`_meta.plasmallm.openElsewhere` set to `close` or `anyway`, or with no choice at
+all for "Try again". If the other Claude doesn't close, PlasmaLLM answers
+`close_failed`, and DroidACP asks again.
+
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission
 questions are answered `cancelled`, its later `session/update`s, permission
@@ -290,7 +308,7 @@ PlasmaLLM-style side panel on tablets.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~80 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~85 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
                                 # cloud), SDK adapters against a local fake server,
                                 # the PlasmaLLM companion against a fake PlasmaLLM,

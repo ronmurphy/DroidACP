@@ -1,5 +1,7 @@
 package com.droidacp.core
 
+import com.droidacp.core.acp.OpenElsewhere
+import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
@@ -198,6 +200,83 @@ class PlasmaLlmTest {
         assertEquals("chat-b", c.joined("chat-b").sessionId)
     }
 
+    // --- a chat open in another Claude (open_elsewhere) ---
+
+    private suspend fun AgentController.askedAboutElsewhere(what: String, check: (OpenElsewhere) -> Boolean = { true }) =
+        waitFor("chat a again, asking about $what") { st ->
+            st.canChat && st.sessionId == "chat-a" && st.openElsewhere?.let(check) == true
+        }.openElsewhere!!
+
+    private fun loadsOf(sessionId: String) = host.requests.filter { it.first == "session/load" && it.second.str("sessionId") == sessionId }.map { it.second }
+
+    private fun JsonObject.choice() = obj("_meta")?.obj("plasmallm")?.str("openElsewhere")
+
+    @Test
+    fun aChatOpenInAnotherClaudeAsksFirstAndCanCloseThatOne() = runBlocking {
+        val c = controller {
+            elsewhere["chat-b"] = "idle"
+            history["chat-a"] = listOf(agentChunk("still chat a"))
+            history["chat-b"] = listOf(agentChunk("from chat b"))
+        }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        c.openPastSession("chat-b", "/home/me/other")
+
+        // PlasmaLLM stayed on chat-a: the phone shows it again, and asks.
+        val asked = c.askedAboutElsewhere("the idle Claude")
+        assertEquals(OpenElsewhere("chat-b", "/home/me/other", "DroidACP", false, "3", true, false), asked)
+        assertEquals("“DroidACP” has this chat open in tmux window 3, and it's idle. The Claude app can reach it too.", asked.summary)
+        assertTrue(c.state.value.items.any { it.text() == "still chat a" })
+        assertTrue(host.requests.none { it.first == "session/new" })
+
+        // Cancel: nothing more is asked for.
+        c.answerOpenElsewhere(null)
+        assertNull(c.state.value.openElsewhere)
+        delay(100)
+        assertEquals(1, loadsOf("chat-b").size)
+        assertEquals("chat-a", c.state.value.sessionId)
+
+        // Asked again, the user has PlasmaLLM close the other Claude first.
+        c.openPastSession("chat-b", "/home/me/other")
+        c.askedAboutElsewhere("the idle Claude again")
+        c.answerOpenElsewhere(OpenElsewhereChoice.CLOSE)
+        val b = c.joined("chat-b")
+        assertTrue(b.items.any { it.text() == "from chat b" })
+        assertNull(b.openElsewhere)
+        assertEquals(listOf(null, null, "close"), loadsOf("chat-b").map { it.choice() })
+        assertEquals("/home/me/other", loadsOf("chat-b").last().str("cwd"))
+    }
+
+    @Test
+    fun aBusyClaudeIsWaitedForAndAFailedCloseCanStillOpenTheChatHere() = runBlocking {
+        val c = controller {
+            elsewhere["chat-b"] = "busy"
+            closeWorks = false
+            history["chat-a"] = listOf(agentChunk("still chat a"))
+        }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        c.openPastSession("chat-b")
+        val busy = c.askedAboutElsewhere("the busy Claude") { it.busy }
+        assertTrue("working right now" in busy.summary)
+
+        // It finished: asking again (no choice yet) gets the idle question.
+        host.elsewhere["chat-b"] = "idle"
+        c.answerOpenElsewhere(OpenElsewhereChoice.RETRY)
+        c.askedAboutElsewhere("the idle Claude") { !it.busy && !it.closeFailed }
+
+        // Closing it fails: still on chat-a, saying so.
+        c.answerOpenElsewhere(OpenElsewhereChoice.CLOSE)
+        val failed = c.askedAboutElsewhere("the failed close") { it.closeFailed }
+        assertEquals("“DroidACP” (in tmux window 3) didn't close. Close it there (/exit), then try again.", failed.summary)
+
+        // Open it here anyway.
+        c.answerOpenElsewhere(OpenElsewhereChoice.ANYWAY)
+        c.joined("chat-b")
+        assertEquals(listOf(null, null, "close", "anyway"), loadsOf("chat-b").map { it.choice() })
+        assertTrue(host.requests.none { it.first == "session/new" })
+    }
+
     // --- turns sent from the computer ---
 
     @Test
@@ -367,6 +446,11 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
 
     /** Chats the agent no longer lists: PlasmaLLM refuses them with `not_found` and stays put. */
     val goneChats = mutableSetOf<String>()
+
+    /** Chats another Claude has open, and its status ("idle" or "busy"): refused with `open_elsewhere`. */
+    val elsewhere = java.util.concurrent.ConcurrentHashMap<String, String>()
+    @Volatile
+    var closeWorks = true
     var promptError: (() -> RpcError)? = null
     val permissionReply = kotlinx.coroutines.CompletableDeferred<JsonObject>()
     private var newChats = 0
@@ -473,6 +557,32 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
                         putJsonObject("plasmallm") { put("reason", "not_found"); put("sessionId", sessionId) }
                     }))
                     return
+                }
+                val other = elsewhere[sessionId]
+                if (other != null) {
+                    val choice = params.obj("_meta")?.obj("plasmallm")?.str("openElsewhere")
+                    val refusal = when {
+                        other == "busy" || choice == null -> "open_elsewhere"
+                        choice == "close" && !closeWorks -> "close_failed"
+                        else -> null
+                    }
+                    if (refusal != null) {
+                        error(id, RpcError(if (refusal == "close_failed") -32603 else -32602, "That chat is open in another Claude", buildJsonObject {
+                            putJsonObject("plasmallm") {
+                                put("reason", refusal)
+                                put("sessionId", open)
+                                put("requested", sessionId)
+                                putJsonObject("elsewhere") {
+                                    put("name", "DroidACP")
+                                    put("status", other)
+                                    put("tmuxWindow", "3")
+                                    put("remoteControl", true)
+                                }
+                            }
+                        }))
+                        return
+                    }
+                    if (choice == "close") elsewhere.remove(sessionId)
                 }
                 if (sessionId in failLoads) {
                     open = "new-${++newChats}"

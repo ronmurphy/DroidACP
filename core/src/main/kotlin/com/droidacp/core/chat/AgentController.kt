@@ -4,6 +4,8 @@ import com.droidacp.core.acp.AcpClient
 import com.droidacp.core.acp.AcpClientHandler
 import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.acp.ContentBlock
+import com.droidacp.core.acp.OpenElsewhere
+import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.acp.PermissionOutcome
 import com.droidacp.core.acp.PermissionRequest
 import com.droidacp.core.acp.PlasmaChat
@@ -168,7 +170,7 @@ class AgentController(
         val s = _state.value
         if (s.busy) cancelTurn()
         leave(l)
-        _state.update { resetSession(it, clearTranscript = true) }
+        _state.update { resetSession(it, clearTranscript = true).copy(openElsewhere = null) }
         val folder = cwd?.trim()?.ifEmpty { null } ?: if (l.plasma) "" else s.sessionCwd?.ifEmpty { null } ?: l.profile.cwd
         l.scope.launch { l.startSession(target = null, preferLoad = false, cwd = folder) }
     }
@@ -215,8 +217,24 @@ class AgentController(
         // PlasmaLLM: leaving a chat mid-turn is the computer's call (it answers "cancelled"); don't stop it from here.
         if (s.busy && !l.plasma) cancelTurn()
         leave(l)
-        _state.update { resetSession(it, clearTranscript = true) }
+        _state.update { resetSession(it, clearTranscript = true).copy(openElsewhere = null) }
         l.scope.launch { l.startSession(target = sessionId, preferLoad = true, cwd = folder) }
+    }
+
+    /**
+     * The user's answer about a chat another Claude has open ([ChatState.openElsewhere]):
+     * PlasmaLLM is asked again with that [choice], or null leaves the phone on the
+     * computer's chat. Leaving that chat mid-turn stops its turn, as any switch does.
+     */
+    fun answerOpenElsewhere(choice: OpenElsewhereChoice?) {
+        val l = link ?: return
+        val asked = _state.value.openElsewhere ?: return
+        _state.update { it.copy(openElsewhere = null) }
+        if (choice == null || asked.sessionId == _state.value.sessionId) return
+        leave(l)
+        _state.update { resetSession(it, clearTranscript = true) }
+        val meta = choice.wire?.let(PlasmaLlm::openElsewhereMeta)
+        l.scope.launch { l.startSession(target = asked.sessionId, preferLoad = true, cwd = asked.cwd, meta = meta) }
     }
 
     /**
@@ -534,6 +552,7 @@ class AgentController(
                     cancelling = false,
                     startingSession = false,
                     permissions = emptyList(),
+                    openElsewhere = null,
                 )
             }
             if (wasConnected) _events.tryEmit(AgentEvent.ConnectionLost(_state.value.agentName, reason))
@@ -603,14 +622,15 @@ class AgentController(
 
         /**
          * Open a session. [target] null = new session. For an existing one,
-         * [preferLoad] picks session/load (replays history) over session/resume.
+         * [preferLoad] picks session/load (replays history) over session/resume. [meta] goes
+         * into a load or resume's `_meta` (the answer to PlasmaLLM's open_elsewhere).
          */
-        suspend fun startSession(target: String?, preferLoad: Boolean, cwd: String) {
-            sessionLock.withLock { openSession(target, preferLoad, cwd) }
+        suspend fun startSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null) {
+            sessionLock.withLock { openSession(target, preferLoad, cwd, meta) }
             if (needsFollow()) followHost()
         }
 
-        private suspend fun openSession(target: String?, preferLoad: Boolean, cwd: String) {
+        private suspend fun openSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null) {
             // Going back to a chat we left: its messages count again.
             if (target != null) left.remove(target)
             val caps = _state.value.capabilities
@@ -624,11 +644,11 @@ class AgentController(
                         // PlasmaLLM told us the open chat's title already; show it while it loads.
                         val title = host?.takeIf { plasma && it.sessionId == target }?.title
                         _state.update { it.copy(sessionId = target, sessionTitle = title ?: it.sessionTitle, replaying = true, items = emptyList()) }
-                        client.loadSession(target, cwd)
+                        client.loadSession(target, cwd, meta)
                     }
                     caps.resumeSession -> {
                         _state.update { it.copy(sessionId = target) }
-                        client.resumeSession(target, cwd)
+                        client.resumeSession(target, cwd, meta)
                     }
                     else -> {
                         _state.update { Transcript.addNote(resetSession(it, clearTranscript = false), "This agent can't continue old sessions, so a new one was started.") }
@@ -653,8 +673,16 @@ class AgentController(
                     )
                 }
             } catch (e: RpcException) {
+                val elsewhere = if (plasma && target != null) OpenElsewhere.parse(e, target, cwd) else null
                 if (e.code == RpcErrorCodes.AUTH_REQUIRED && !plasma) {
                     _state.update { it.copy(authRequired = true, sessionId = null) }
+                } else if (elsewhere != null) {
+                    // Another Claude has that chat open, and PlasmaLLM stayed on its own chat:
+                    // show that one again (followHost, below) and ask what to do
+                    // (answerOpenElsewhere). Like not_found, it isn't a failure to follow.
+                    _state.update { resetSession(it, clearTranscript = false).copy(openElsewhere = elsewhere) }
+                    val stays = e.plasmaSessionId
+                    if (stays != null && host?.sessionId != stays) host = PlasmaChat(stays, host?.cwd ?: "", null, false)
                 } else if (plasma && e.plasmaReason == PlasmaLlm.Reason.NOT_FOUND) {
                     // The chat is gone, and PlasmaLLM stayed on the chat it had open: show that one
                     // again (followHost, below). The error names the chat asked for, not one opened

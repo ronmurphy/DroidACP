@@ -193,7 +193,7 @@ computers without PlasmaLLM.
   - pick a folder (one you used before, or browse the computer), then start a new chat there or open one of its chats (`session/list`);
   - bookmark a chat with ☆ to come back to it in one tap, from any folder. Before a bookmark opens, DroidACP checks the agent still has that chat, and offers to remove the bookmark if not;
   - switching while the agent is working asks first, since it stops that work;
-  - don't open a chat that's still running in a terminal on the computer: two Claude processes would then work on it;
+  - don't open a chat that's still running in a terminal on the computer: two Claude processes would then work on it. PlasmaLLM (protocol 3) catches this: it says where the chat is open, and offers to close that Claude first, while it's idle;
   - nothing of the chat you leave carries over: its permission questions are cancelled, anything it still sends is ignored, and the agent is told to close it (`session/close`, when it supports that) so it frees what it held. Each chat has its own context on the agent, and a chat you've left costs no tokens.
 - **Reconnect** after a dropped connection, continuing the session (`session/resume` / `session/load`)
 - **Stays connected in the background** (foreground service), and notifies you when

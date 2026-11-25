@@ -64,6 +64,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.core.acp.OpenElsewhere
+import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
@@ -93,6 +95,9 @@ interface ChatActions {
     fun forgetFolder(path: String)
     fun authenticate(methodId: String)
     fun answerPermission(requestId: Long, optionId: String?)
+
+    /** About a chat another Claude has open ([ChatState.openElsewhere]); null stays on the computer's chat. */
+    fun answerOpenElsewhere(choice: OpenElsewhereChoice?)
 
     /** The composer took the text of a message that couldn't be sent from a notification. */
     fun draftUsed()
@@ -238,6 +243,13 @@ fun ChatScreen(
     }
     if (settingsOpen) SessionSettingsSheet(state, actions, onDismiss = { settingsOpen = false })
     if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = ::switchChat, onDismiss = { chatsOpen = false })
+    // Under the stop question: answering it ("Keep working") brings this one back.
+    val elsewhere = state.openElsewhere
+    if (elsewhere != null && pendingSwitch == null) {
+        OpenElsewhereDialog(elsewhere, onAnswer = { choice ->
+            if (choice == null) actions.answerOpenElsewhere(null) else switchChat { actions.answerOpenElsewhere(choice) }
+        })
+    }
     pendingSwitch?.let { go ->
         AlertDialog(
             onDismissRequest = { pendingSwitch = null },
@@ -252,6 +264,41 @@ fun ChatScreen(
             dismissButton = { TextButton(onClick = { pendingSwitch = null }) { Text("Keep working") } },
         )
     }
+}
+
+/**
+ * PlasmaLLM didn't open a chat because another Claude has it open (a terminal one, say):
+ * close that one and open it here, open it here too, or stay. While that Claude works,
+ * only waiting makes sense: closing it is refused, and a second Claude would fork the chat.
+ */
+@Composable
+private fun OpenElsewhereDialog(e: OpenElsewhere, onAnswer: (OpenElsewhereChoice?) -> Unit) {
+    val choices: List<Pair<String, OpenElsewhereChoice?>> = when {
+        e.busy -> listOf("Try again" to OpenElsewhereChoice.RETRY, "OK" to null)
+        e.closeFailed -> listOf(
+            "Try again" to OpenElsewhereChoice.RETRY,
+            "Open here anyway" to OpenElsewhereChoice.ANYWAY,
+            "Cancel" to null,
+        )
+        else -> listOf(
+            "Close that one and open here" to OpenElsewhereChoice.CLOSE,
+            "Open here anyway" to OpenElsewhereChoice.ANYWAY,
+            "Cancel" to null,
+        )
+    }
+    val text = if (e.busy || e.closeFailed) e.summary else {
+        e.summary + "\n\nOpening it here too means two Claudes on one chat, and neither sees what the other says."
+    }
+    AlertDialog(
+        onDismissRequest = { onAnswer(null) },
+        title = { Text(if (e.closeFailed) "That Claude didn't close" else "This chat is open in another Claude") },
+        text = { Text(text) },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                choices.forEach { (label, choice) -> TextButton(onClick = { onAnswer(choice) }) { Text(label) } }
+            }
+        },
+    )
 }
 
 private fun connectingText(state: ChatState): String {

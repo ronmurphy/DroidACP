@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.chat.ChatBookmark
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ImageAttachment
@@ -240,6 +241,10 @@ class MainActivity : ComponentActivity() {
                 }
                 override fun authenticate(methodId: String) = controller.authenticate(methodId)
                 override fun answerPermission(requestId: Long, optionId: String?) = controller.answerPermission(requestId, optionId)
+                override fun answerOpenElsewhere(choice: OpenElsewhereChoice?) {
+                    if (choice != null) attachments.clear()
+                    controller.answerOpenElsewhere(choice)
+                }
                 override fun reconnect() = controller.reconnect()
                 override fun disconnect() {
                     controller.disconnect()
