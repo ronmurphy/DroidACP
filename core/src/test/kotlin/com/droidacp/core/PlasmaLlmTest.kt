@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -251,7 +252,9 @@ class PlasmaLlmTest {
         assertNull(c.sendReply("chat-b", "  to chat b  "))
         val prompt = c.waitFor("the reply") { it.items.any { item -> item is ChatItem.User && item.text == "to chat b" } }
         assertEquals("chat-b", prompt.sessionId)
-        assertEquals("chat-b", host.requests.last { it.first == "session/prompt" }.second.str("sessionId"))
+        // The chat shows the message before PlasmaLLM has it: wait for the request itself.
+        val sent = host.waitForRequests("session/prompt", 2)
+        assertEquals("chat-b", sent.last().str("sessionId"))
     }
 
     @Test
@@ -345,6 +348,16 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     private var openCwd = "/home/me/project"
 
     fun shutdownExecutor() = executor.shutdownNow()
+
+    /** The params of the first [count] requests named [method], once that many have arrived. */
+    suspend fun waitForRequests(method: String, count: Int): List<JsonObject> = withTimeout(5_000) {
+        var got = requests.filter { it.first == method }
+        while (got.size < count) {
+            delay(10)
+            got = requests.filter { it.first == method }
+        }
+        got.take(count).map { it.second }
+    }
 
     override fun connect() {
         executor.execute { listener.onOpen() }
