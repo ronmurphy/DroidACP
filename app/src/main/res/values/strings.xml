@@ -2,8 +2,13 @@
 <resources>
     <string name="app_name">DroidACP</string>
     <string name="widget_name">DroidACP agent</string>
-    <string name="widget_description">Shows what your agent is doing. Tap Ask to send a message.</string>
+    <string name="widget_description">Your chat with the agent on the home screen: ask, answer its permission questions, or stop it.</string>
     <string name="widget_ask">Ask</string>
+    <string name="widget_stop">Stop</string>
+    <string name="widget_allow">Allow</string>
+    <string name="widget_deny">Deny</string>
+    <string name="widget_voice">Ask by voice</string>
+    <string name="widget_more_choices">More choices in the app</string>
     <string name="widget_default_title">DroidACP</string>
     <string name="widget_default_body">No agent connected. Tap to open.</string>
     <string name="channel_connection">Agent connection</string>

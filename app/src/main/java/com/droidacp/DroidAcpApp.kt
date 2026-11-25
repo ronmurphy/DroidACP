@@ -25,9 +25,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -92,6 +92,13 @@ class DroidAcpApp : Application() {
         }
     }
 
+    /** Connect again to the agent used last time, and its last chat. False if there's none. */
+    fun reconnectLast(): Boolean {
+        val last = profiles.get(profiles.lastProfileId) ?: return false
+        controller.connect(last, resumeSessionId = profiles.lastSessionId(last.id))
+        return true
+    }
+
     @OptIn(FlowPreview::class)
     private fun watchController() {
         // Run the foreground service exactly while we're connecting or connected.
@@ -112,11 +119,11 @@ class DroidAcpApp : Application() {
                 }
         }
 
-        // Keep the home-screen widget up to date (at most a couple of times a second).
+        // Keep the home-screen widget up to date, about once a second while the agent writes.
         appScope.launch {
             var previous = AgentWidget.load(this@DroidAcpApp)
             controller.state
-                .debounce(500)
+                .sample(1000)
                 .map { AgentWidget.snapshotOf(it, previous) }
                 .distinctUntilChanged()
                 .collect { snapshot ->

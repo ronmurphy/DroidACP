@@ -71,6 +71,29 @@ an agent (SSH, a desktop gateway, Bluetooth...) means writing one `Transport`.
 pure functions in `Transcript.kt`, which is why most UI behaviour is testable
 without Android. Compose redraws from the `StateFlow`.
 
+### The home-screen widget
+
+`app/.../widget/`. A launcher draws widgets from RemoteViews, so no Compose and no
+text field; the widget gets as close to the whole app as that allows:
+
+- **The chat as a list** (`AgentWidgetService`, a `RemoteViewsService`): your
+  messages, the replies and one line per tool call, newest at the bottom.
+  `core/.../chat/ChatDigest.kt` turns `ChatState.items` into those plain-text rows
+  (thoughts left out, a long run of tool calls cut to its last three) and is unit
+  tested. A bigger widget shows more of it.
+- **Stop** while a turn runs, and **Allow / Deny** when the agent asks
+  (`WidgetActionReceiver`). Each button carries the chat's `sessionId` (and the
+  question's id) it was drawn for, and does nothing if that has changed.
+- **Ask** opens `QuickAskActivity`: a see-through activity in its own task, so the
+  app doesn't come up behind it, with a text box, voice input (Android's speech
+  recognizer, when the device has one; the widget's mic button starts it straight
+  away) and Send. It sends with `AgentController.sendReply`, like the notification's
+  Reply, and closes; the reply arrives in the widget. When nothing is connected it
+  offers to connect to the last agent.
+
+`DroidAcpApp` redraws the widget about once a second from `ChatState`; the rows
+are saved, so the last chat stays on the home screen after the app is closed.
+
 ## ACP: what the client supports
 
 `AcpClient.kt` (client → agent) and `AcpTypes.kt` (parsing, deliberately

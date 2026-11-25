@@ -87,8 +87,8 @@ class MainActivity : ComponentActivity() {
         val status = app.controller.state.value.status
         if (status is ConnectionStatus.Disconnected || status is ConnectionStatus.Failed) {
             // Nothing connected: reconnect to the agent used last time, if any.
-            val last = app.profiles.get(app.profiles.lastProfileId) ?: return
-            connect(last, resume = app.profiles.lastSessionId(last.id))
+            attachments.clear()
+            if (!app.reconnectLast()) return
         }
         intent.getStringExtra(EXTRA_DRAFT)?.let { draft.value = it }
         openChatRequests.intValue++

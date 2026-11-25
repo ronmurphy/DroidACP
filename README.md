@@ -193,8 +193,12 @@ computers without PlasmaLLM.
 - **Reconnect** after a dropped connection, continuing the session (`session/resume` / `session/load`)
 - **Stays connected in the background** (foreground service), and notifies you when
   the agent finishes or needs permission while you're in another app
-- **Home-screen widget**: the agent's status and latest reply, plus an **Ask** button
-  that jumps straight to the text box (it reconnects to your last agent if needed)
+- **Home-screen widget**: the chat itself, without opening the app. It shows your
+  messages, the replies and the tool calls as they happen, and more of them when you
+  make the widget bigger. **Ask** opens a small box over the home screen to type or
+  speak a message, **Stop** ends a turn, and **Allow / Deny** answer the agent's
+  permission questions. Tap the chat to open the app. If nothing is connected, Ask
+  offers to reconnect to your last agent.
 - **Protocol log**: every JSON-RPC message in and out, for debugging and learning ACP
 - Ctrl+Enter sends, if you use a keyboard cover
 
@@ -253,6 +257,9 @@ real agent with a scripted fake model, and the SDK adapter against a local fake 
 | `service/AgentService.kt` | Foreground service that keeps the connection alive in the background |
 | `service/ReplyReceiver.kt` | The Reply box in "agent finished" notifications: sends the answer to the chat the notification came from |
 | `widget/AgentWidget.kt` | Home-screen widget (RemoteViews + `res/layout/widget_agent.xml`) |
+| `widget/AgentWidgetService.kt` | The widget's chat list (rows from `core/.../chat/ChatDigest.kt`) |
+| `widget/WidgetActions.kt` | The widget's Stop, Allow and Deny buttons |
+| `QuickAskActivity.kt` | The widget's Ask: a small box over the home screen, with voice input |
 
 **`bridge/`: Node.js, zero dependencies**
 

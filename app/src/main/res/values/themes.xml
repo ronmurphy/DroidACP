@@ -6,4 +6,33 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <!-- The quick-ask box over the home screen: see-through, so only the box shows. -->
+    <style name="Theme.DroidACP.QuickAsk" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- Buttons in the home-screen widget. -->
+    <style name="WidgetButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:background">@drawable/widget_button_bg</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textColor">@color/launcher_background</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="WidgetButton.Outline">
+        <item name="android:background">@drawable/widget_button_outline_bg</item>
+        <item name="android:textColor">@color/widget_accent</item>
+    </style>
 </resources>

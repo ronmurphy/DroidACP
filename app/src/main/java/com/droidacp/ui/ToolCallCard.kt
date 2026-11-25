@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.acp.ToolContent
+import com.droidacp.core.chat.displayTitle
 import com.droidacp.core.diff.LineDiff
 
 /**
@@ -67,7 +68,7 @@ fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: B
             Text(kindIcon(call.kind), fontSize = 16.sp)
             Spacer(Modifier.width(10.dp))
             Text(
-                text = call.title,
+                text = call.displayTitle,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 maxLines = if (expanded) 6 else 1,

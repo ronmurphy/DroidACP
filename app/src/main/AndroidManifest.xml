@@ -27,6 +27,10 @@
     <queries>
         <package android:name="com.termux" />
         <package android:name="com.tailscale.ipn" />
+        <!-- Speech input for the widget's quick-ask box. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
     </queries>
 
     <application
@@ -52,6 +56,19 @@
             </intent-filter>
         </activity>
 
+        <!--
+            The widget's Ask: a small box over the home screen. Its own task (taskAffinity "")
+            so opening it doesn't bring the whole app up behind it.
+        -->
+        <activity
+            android:name=".QuickAskActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@style/Theme.DroidACP.QuickAsk"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name=".service.AgentService"
             android:exported="false"
@@ -73,5 +90,14 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/agent_widget_info" />
         </receiver>
+
+        <!-- The widget's chat list, and its Stop / Allow / Deny buttons. -->
+        <service
+            android:name=".widget.AgentWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+        <receiver
+            android:name=".widget.WidgetActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

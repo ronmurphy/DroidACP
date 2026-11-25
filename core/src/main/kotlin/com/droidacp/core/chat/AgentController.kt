@@ -692,13 +692,13 @@ class AgentController(
                     permissions = withTool.permissions + PendingPermission(
                         requestId = id,
                         toolCallId = request.toolCall.id,
-                        title = request.toolCall.title ?: tool?.call?.title ?: "The agent wants to use a tool",
+                        title = (request.toolCall.title ?: tool?.call?.title)?.let(ToolNames::display) ?: "The agent wants to use a tool",
                         kind = request.toolCall.kind ?: tool?.call?.kind ?: "other",
                         options = request.options,
                     ),
                 )
             }
-            _events.tryEmit(AgentEvent.PermissionRequested(_state.value.agentName, request.toolCall.title ?: "Permission needed"))
+            _events.tryEmit(AgentEvent.PermissionRequested(_state.value.agentName, request.toolCall.title?.let(ToolNames::display) ?: "Permission needed"))
 
             return try {
                 answer.await()
