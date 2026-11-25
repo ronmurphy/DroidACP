@@ -57,6 +57,11 @@
             android:exported="false"
             android:foregroundServiceType="dataSync|remoteMessaging" />
 
+        <!-- The Reply box in "agent finished" notifications. -->
+        <receiver
+            android:name=".service.ReplyReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".widget.AgentWidgetProvider"
             android:exported="false"

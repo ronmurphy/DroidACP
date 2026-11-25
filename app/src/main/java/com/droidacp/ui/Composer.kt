@@ -75,9 +75,19 @@ fun Composer(
     actions: ChatActions,
     attachments: List<AttachmentThumb>,
     focusRequest: Int,
+    draft: String? = null,
     onSent: () -> Unit,
 ) {
     var field by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+
+    // A reply from a notification that couldn't be sent: put it back here so it isn't lost.
+    LaunchedEffect(draft) {
+        if (draft != null) {
+            val text = if (field.text.isBlank()) draft else field.text.trimEnd() + "\n\n" + draft
+            field = TextFieldValue(text, TextRange(text.length))
+            actions.draftUsed()
+        }
+    }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 

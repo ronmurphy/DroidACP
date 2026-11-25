@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
     private val openChatRequests = mutableIntStateOf(0)
     private val focusRequests = mutableIntStateOf(0)
 
+    // A message that couldn't be sent from a notification, waiting to go back in the message box.
+    private val draft = mutableStateOf<String?>(null)
+
     // Images picked for the next message.
     private val attachments = mutableStateListOf<PreparedImage>()
     private val nextAttachmentId = AtomicLong(1)
@@ -87,6 +90,7 @@ class MainActivity : ComponentActivity() {
             val last = app.profiles.get(app.profiles.lastProfileId) ?: return
             connect(last, resume = app.profiles.lastSessionId(last.id))
         }
+        intent.getStringExtra(EXTRA_DRAFT)?.let { draft.value = it }
         openChatRequests.intValue++
         if (intent.getBooleanExtra(EXTRA_FOCUS_INPUT, false)) focusRequests.intValue++
     }
@@ -176,6 +180,10 @@ class MainActivity : ComponentActivity() {
                     logReturnTo = Screen.Chat
                     screen = Screen.Log
                 }
+
+                override fun draftUsed() {
+                    draft.value = null
+                }
             }
         }
 
@@ -216,6 +224,7 @@ class MainActivity : ComponentActivity() {
                 actions = chatActions,
                 attachments = attachments.map { AttachmentThumb(it.id, it.thumb) },
                 focusRequest = focusRequests.intValue,
+                draft = draft.value,
             )
 
             Screen.Edit -> ProfileEditScreen(
@@ -258,5 +267,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_CHAT = "com.droidacp.extra.OPEN_CHAT"
         const val EXTRA_FOCUS_INPUT = "com.droidacp.extra.FOCUS_INPUT"
+        const val EXTRA_DRAFT = "com.droidacp.extra.DRAFT"
     }
 }

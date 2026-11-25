@@ -173,6 +173,13 @@ go through it, with a version bump. DroidACP's side:
   already did, and names it).
 - Prompts typed elsewhere arrive as `user_message_chunk`s with a `messageId`;
   consecutive user chunks are only merged when their ids match.
+- The "finished" notification has a Reply button (Android direct reply,
+  `service/ReplyReceiver.kt` → `AgentController.sendReply`). The reply only goes to
+  the chat the notification came from: if the phone has followed PlasmaLLM to
+  another chat, or a turn is running, it isn't sent and the notification says why.
+  A prompt PlasmaLLM refuses (`busy`, `not_open_chat`, `no_chat`, ...) becomes
+  `AgentEvent.PromptFailed` with the text kept, and tapping that notification puts
+  it back in the message box. This works the same for bridge and built-in agents.
 
 All of this lives in `core/.../acp/PlasmaLlm.kt` and `AgentController.kt` (the
 `plasma` parts of `Link`). Not built yet: a side chat (needs protocol 2), and the

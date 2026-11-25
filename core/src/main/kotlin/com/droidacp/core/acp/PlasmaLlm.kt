@@ -37,10 +37,27 @@ object PlasmaLlm {
     object Reason {
         const val NOT_OPEN_CHAT = "not_open_chat"
         const val BUSY = "busy"
+        const val NO_CHAT = "no_chat"
         const val OPEN_FAILED = "open_failed"
         const val SIGN_IN_NEEDED = "sign_in_needed"
         const val AGENT_NOT_RUNNING = "agent_not_running"
         const val NO_FOLDER = "no_folder"
+        const val STILL_OPENING = "still_opening"
+        const val TURN_ERROR = "turn_error"
+    }
+
+    /**
+     * Why PlasmaLLM didn't take a message, in words for the user, when the reason means
+     * the agent never got it (so it can be offered again). Null for any other error.
+     */
+    fun refusedPrompt(reason: String?): String? = when (reason) {
+        Reason.NOT_OPEN_CHAT -> "PlasmaLLM had moved to another chat."
+        Reason.BUSY -> "PlasmaLLM was already working on a message."
+        Reason.NO_CHAT -> "PlasmaLLM had no chat open."
+        Reason.SIGN_IN_NEEDED -> "The agent needs you to sign in, on the computer."
+        Reason.AGENT_NOT_RUNNING -> "PlasmaLLM's agent isn't running."
+        Reason.STILL_OPENING -> "PlasmaLLM was still opening the chat."
+        else -> null
     }
 
     /**

@@ -230,7 +230,60 @@ class PlasmaLlmTest {
         assertEquals("cancelled", reply.obj("outcome")?.str("outcome"), "answered so the request doesn't hang; PlasmaLLM ignores it")
     }
 
+    // --- replies from a notification ---
+
+    @Test
+    fun aReplyGoesOnlyToTheChatTheNotificationCameFrom() = runBlocking {
+        val c = controller()
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val finished = async(start = CoroutineStart.UNDISPATCHED) { c.events.first { it is AgentEvent.TurnFinished } }
+        assertTrue(c.sendPrompt("first"))
+        assertEquals("chat-a", (withTimeout(5_000) { finished.await() } as AgentEvent.TurnFinished).sessionId, "the notification knows its chat")
+        c.waitFor("the turn to end") { !it.busy }
+
+        // The laptop opens another chat before the reply is typed.
+        host.notify(PlasmaLlm.STATE, chatState("chat-b", "/home/me/other"))
+        c.joined("chat-b")
+        assertEquals("PlasmaLLM has moved to another chat.", c.sendReply("chat-a", "second"))
+        assertEquals(1, host.requests.count { it.first == "session/prompt" }, "nothing sent to the wrong chat")
+
+        assertNull(c.sendReply("chat-b", "  to chat b  "))
+        val prompt = c.waitFor("the reply") { it.items.any { item -> item is ChatItem.User && item.text == "to chat b" } }
+        assertEquals("chat-b", prompt.sessionId)
+        assertEquals("chat-b", host.requests.last { it.first == "session/prompt" }.second.str("sessionId"))
+    }
+
+    @Test
+    fun aReplyWhileATurnRunsIsntSent() = runBlocking {
+        val c = controller { runningTurn = true }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        c.waitFor("busy") { it.busy }
+        assertEquals("PlasmaLLM is already working on a message.", c.sendReply("chat-a", "hello"))
+        assertTrue(host.requests.none { it.first == "session/prompt" })
+    }
+
+    @Test
+    fun aMessagePlasmaLlmRefusedKeepsItsText() = runBlocking {
+        val c = controller { promptError = { busy() } }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val failed = async(start = CoroutineStart.UNDISPATCHED) { c.events.first { it is AgentEvent.PromptFailed } }
+        assertNull(c.sendReply("chat-a", "please look"))
+        val event = withTimeout(5_000) { failed.await() } as AgentEvent.PromptFailed
+        assertEquals("please look", event.unsent, "so it can go back in the message box")
+        assertEquals("Your message wasn't sent: PlasmaLLM was already working on a message.", event.message)
+        assertFalse(c.waitFor("the turn to end") { !it.busy }.busy)
+    }
+
     // --- helpers ---
+
+    private fun busy() = RpcError(
+        -32603,
+        "Plasma LLM is already working on a message",
+        buildJsonObject { putJsonObject("plasmallm") { put("reason", "busy"); put("sessionId", "chat-a") } },
+    )
 
     private fun ChatItem.text(): String = when (this) {
         is ChatItem.User -> text

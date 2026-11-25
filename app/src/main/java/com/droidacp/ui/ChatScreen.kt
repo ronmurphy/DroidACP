@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -79,6 +78,9 @@ interface ChatActions {
     fun openSession(sessionId: String)
     fun authenticate(methodId: String)
     fun answerPermission(requestId: Long, optionId: String?)
+
+    /** The composer took the text of a message that couldn't be sent from a notification. */
+    fun draftUsed()
     fun reconnect()
     fun disconnect()
     fun openLog()
@@ -90,11 +92,13 @@ fun ChatScreen(
     actions: ChatActions,
     attachments: List<AttachmentThumb>,
     focusRequest: Int,
+    draft: String? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var historyOpen by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val follower = remember(listState) { EndFollower(listState) }
     val scope = rememberCoroutineScope()
 
     Scaffold(
@@ -142,11 +146,8 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            Composer(state = state, actions = actions, attachments = attachments, focusRequest = focusRequest, onSent = {
-                scope.launch {
-                    if (state.items.isNotEmpty()) listState.scrollToItem(state.items.lastIndex)
-                    listState.scrollBy(100_000f)
-                }
+            Composer(state = state, actions = actions, attachments = attachments, focusRequest = focusRequest, draft = draft, onSent = {
+                scope.launch { follower.scrollToEnd() }
             })
         },
     ) { padding ->
@@ -176,7 +177,7 @@ fun ChatScreen(
             val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
             if (!atBottom && state.items.isNotEmpty()) {
                 SmallFloatingActionButton(
-                    onClick = { scope.launch { listState.scrollToItem(state.items.lastIndex); listState.scrollBy(100_000f) } },
+                    onClick = { scope.launch { follower.scrollToEnd() } },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = side, bottom = 12.dp),
@@ -186,6 +187,9 @@ fun ChatScreen(
     }
 
     // Follow the conversation while new text streams in, unless the user scrolled up.
+    LaunchedEffect(follower) { follower.watch() }
+    // Another chat (PlasmaLLM switched, or one picked from the history): start at its end.
+    LaunchedEffect(state.sessionId) { follower.scrollToEnd() }
     val last = state.items.lastOrNull()
     val lastSize = when (last) {
         is ChatItem.Agent -> last.text.length
@@ -193,15 +197,7 @@ fun ChatScreen(
         is ChatItem.Tool -> last.call.status.length + last.call.content.size
         else -> 0
     }
-    LaunchedEffect(state.items.size, lastSize) {
-        val info = listState.layoutInfo
-        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-        val nearBottom = lastVisible >= info.totalItemsCount - 2
-        if (state.items.isNotEmpty() && nearBottom && !listState.isScrollInProgress) {
-            listState.scrollToItem(state.items.lastIndex)
-            listState.scrollBy(100_000f)
-        }
-    }
+    LaunchedEffect(state.items.size, lastSize, state.busy) { follower.keepUp() }
 
     val permission = state.permissions.firstOrNull()
     if (permission != null) {

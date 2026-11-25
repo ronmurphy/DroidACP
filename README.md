@@ -168,6 +168,9 @@ Then:
   as working. Stop works for them too.
 - **A permission prompt answered on the computer closes here**: the first answer counts.
 - A notification tells you when a turn ends while DroidACP is in the background.
+  Its **Reply** button sends an answer to that chat without opening the app. If
+  PlasmaLLM has moved to another chat, or is already working on a message, the
+  notification says so, and tapping it puts your message back in the message box.
 
 DroidACP says it's a companion when it connects, and uses PlasmaLLM's extensions only
 when PlasmaLLM answers in kind; anything else on that port is treated as a plain ACP
@@ -247,6 +250,7 @@ real agent with a scripted fake model, and the SDK adapter against a local fake 
 | `MainActivity.kt` | Screen navigation, image picking, connects UI actions to the controller |
 | `ui/*.kt` | Jetpack Compose screens (chat, composer, tool cards, dialogs, profiles, log) |
 | `service/AgentService.kt` | Foreground service that keeps the connection alive in the background |
+| `service/ReplyReceiver.kt` | The Reply box in "agent finished" notifications: sends the answer to the chat the notification came from |
 | `widget/AgentWidget.kt` | Home-screen widget (RemoteViews + `res/layout/widget_agent.xml`) |
 
 **`bridge/`: Node.js, zero dependencies**

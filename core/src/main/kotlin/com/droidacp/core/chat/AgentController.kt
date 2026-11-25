@@ -43,9 +43,13 @@ data class LogEntry(val timeMillis: Long, val outgoing: Boolean, val text: Strin
 
 /** Things worth telling the user about even when the app is in the background. */
 sealed interface AgentEvent {
-    data class TurnFinished(val agentName: String, val stopReason: String, val lastText: String?) : AgentEvent
+    /** A turn ended in [sessionId], the chat a reply from the notification goes to. */
+    data class TurnFinished(val agentName: String, val stopReason: String, val lastText: String?, val sessionId: String? = null) : AgentEvent
     data class PermissionRequested(val agentName: String, val title: String) : AgentEvent
     data class ConnectionLost(val agentName: String, val reason: String) : AgentEvent
+
+    /** A message failed. [unsent] is its text when the agent never got it, so it isn't lost. */
+    data class PromptFailed(val agentName: String, val message: String, val unsent: String?) : AgentEvent
 }
 
 /** An image to attach to a prompt (already base64 encoded). */
@@ -209,7 +213,32 @@ class AgentController(
         val sessionId = s.sessionId ?: return false
         if (!s.canChat || s.busy) return false
         if (text.isBlank() && images.isEmpty()) return false
+        startPrompt(l, sessionId, text, images)
+        return true
+    }
 
+    /**
+     * Send a reply typed into a notification. It only goes to [sessionId], the chat the
+     * notification came from. Returns null when it was sent, otherwise why it wasn't.
+     */
+    fun sendReply(sessionId: String, text: String): String? {
+        val l = link
+        val s = _state.value
+        val who = if (l?.plasma == true) "PlasmaLLM" else s.agentName
+        return when {
+            l == null || !s.isConnected -> "DroidACP isn't connected to ${s.agentName} any more."
+            text.isBlank() -> "The reply was empty."
+            s.sessionId != sessionId -> if (l.plasma) "PlasmaLLM has moved to another chat." else "Another session is open now."
+            s.busy -> "$who is already working on a message."
+            !s.canChat -> "$who isn't ready for a message yet."
+            else -> {
+                startPrompt(l, sessionId, text.trim(), emptyList())
+                null
+            }
+        }
+    }
+
+    private fun startPrompt(l: Link, sessionId: String, text: String, images: List<ImageAttachment>) {
         val blocks = buildList {
             images.forEach { add(AcpClient.imageBlock(it.mimeType, it.base64)) }
             if (text.isNotBlank()) add(AcpClient.textBlock(text))
@@ -228,17 +257,19 @@ class AgentController(
                 stopReason = l.client.prompt(sessionId, blocks)
                 Transcript.describeStopReason(stopReason)?.let { noteHere(it) }
             } catch (e: RpcException) {
-                stopReason = "error"
                 if (e.code == RpcErrorCodes.AUTH_REQUIRED && !l.plasma) {
                     _state.update { it.copy(authRequired = true) }
                 }
+                // PlasmaLLM says why it didn't take the message; the agent never got it.
+                val refused = if (l.plasma) PlasmaLlm.refusedPrompt(e.plasmaReason) else null
+                val message = if (refused != null) "Your message wasn't sent: $refused" else "Agent error: ${e.message}"
                 if (l.plasma && e.plasmaReason == PlasmaLlm.Reason.NOT_OPEN_CHAT) {
                     // The computer has another chat open: show that one instead.
-                    stopReason = null
                     l.followHost(e.plasmaSessionId, note = "Your message wasn't sent: PlasmaLLM had switched to this chat.")
                 } else {
-                    noteHere("Agent error: ${e.message}", ChatItem.Severity.Error)
+                    noteHere(message, if (refused != null) ChatItem.Severity.Warning else ChatItem.Severity.Error)
                 }
+                if (l === link) _events.tryEmit(AgentEvent.PromptFailed(_state.value.agentName, message, unsent = text.takeIf { refused != null && it.isNotBlank() }))
             } catch (e: ConnectionClosedException) {
                 // The close handler reports this.
             } finally {
@@ -249,10 +280,9 @@ class AgentController(
             // Only report turns that really ended (not ones cut off by a dropped connection).
             if (stopReason != null && l === link) {
                 val s2 = _state.value
-                _events.tryEmit(AgentEvent.TurnFinished(s2.agentName, stopReason, s2.lastAgentText))
+                _events.tryEmit(AgentEvent.TurnFinished(s2.agentName, stopReason, s2.lastAgentText, sessionId))
             }
         }
-        return true
     }
 
     /** Ask the agent to stop. Pending permission questions are answered "cancelled", as ACP requires. */
@@ -645,7 +675,7 @@ class AgentController(
                 Transcript.describeStopReason(reason)?.let { Transcript.addNote(ended, it) } ?: ended
             }
             val after = _state.value
-            _events.tryEmit(AgentEvent.TurnFinished(after.agentName, reason, after.lastAgentText))
+            _events.tryEmit(AgentEvent.TurnFinished(after.agentName, reason, after.lastAgentText, turn.sessionId))
         }
 
         override suspend fun requestPermission(request: PermissionRequest): PermissionOutcome {

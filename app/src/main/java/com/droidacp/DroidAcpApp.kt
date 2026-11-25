@@ -130,11 +130,19 @@ class DroidAcpApp : Application() {
             controller.events.collect { event ->
                 if (isInForeground) return@collect
                 when (event) {
-                    is AgentEvent.TurnFinished -> Notifications.showEvent(
-                        this@DroidAcpApp,
-                        "${event.agentName} finished",
-                        event.lastText?.take(400) ?: "Stop reason: ${event.stopReason}",
-                    )
+                    is AgentEvent.TurnFinished -> {
+                        // Offer Reply when the chat it finished in is still open and ready for a message.
+                        val s = controller.state.value
+                        val replyTo = event.sessionId?.takeIf { it == s.sessionId && s.canChat && !s.busy }
+                        Notifications.showEvent(
+                            this@DroidAcpApp,
+                            "${event.agentName} finished",
+                            event.lastText?.take(400) ?: "Stop reason: ${event.stopReason}",
+                            replyTo = replyTo,
+                            agentName = event.agentName,
+                        )
+                    }
+                    is AgentEvent.PromptFailed -> Notifications.showNotSent(this@DroidAcpApp, event.agentName, event.message, event.unsent)
                     is AgentEvent.PermissionRequested -> Notifications.showEvent(
                         this@DroidAcpApp,
                         "${event.agentName} needs your permission",
