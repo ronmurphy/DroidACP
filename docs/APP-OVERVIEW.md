@@ -175,6 +175,15 @@ moving adds that the chat left is still working in its tab. Without the flag,
 Chats panel that's in a back tab brings that tab to the front, so the
 "Stop the agent's work?" question says so when PlasmaLLM speaks protocol 4.
 
+PlasmaLLM 5 passes on turns from outside it, for a chat with Remote Control
+on: a message typed in the Claude app, or a turn Claude starts by itself. They
+come as any turn sent from elsewhere (`started`, maybe no prompt chunk, the
+updates, `ended`), so DroidACP shows them as running and sends nothing into
+them. A message from the Claude app during a turn this device started comes as
+a `user_message_chunk`; since PlasmaLLM never sends a device its own prompt,
+`Transcript` shows it, where for other agents a user chunk during our own turn
+is dropped as an echo.
+
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission
 questions are answered `cancelled`, its later `session/update`s, permission
@@ -319,7 +328,7 @@ PlasmaLLM-style side panel on tablets.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~90 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~95 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
                                 # cloud), SDK adapters against a local fake server,
                                 # the PlasmaLLM companion against a fake PlasmaLLM,

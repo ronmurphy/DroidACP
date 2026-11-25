@@ -21,8 +21,14 @@ object Transcript {
         is SessionUpdate.UserMessageChunk ->
             // While *we* are running a turn we already added the user's message locally, so
             // an echo is dropped. Otherwise user chunks come from a history replay (session/load)
-            // or from a prompt typed elsewhere (PlasmaLLM's window, another device).
-            if (state.busy && !state.remoteTurn && !state.replaying) state else appendUser(state, update.content, update.messageId)
+            // or from a prompt typed elsewhere (PlasmaLLM's window, another device). PlasmaLLM
+            // never sends a device its own prompt, so there a user chunk during our turn is a
+            // message typed in the Claude app (Remote Control), and it's shown.
+            if (state.busy && !state.remoteTurn && !state.replaying && state.plasmaLlm == null) {
+                state
+            } else {
+                appendUser(state, update.content, update.messageId)
+            }
         is SessionUpdate.ToolCallStarted -> upsertTool(state, update.call.id) { existing ->
             existing?.let { mergeFull(it, update.call) } ?: update.call
         }

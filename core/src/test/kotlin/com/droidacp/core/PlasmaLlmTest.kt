@@ -395,6 +395,51 @@ class PlasmaLlmTest {
     }
 
     @Test
+    fun aMessageFromTheClaudeAppDuringOurTurnIsShown() = runBlocking {
+        val c = controller { holdPrompts = true }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        assertTrue(c.sendPrompt("look at the build"))
+        host.waitForRequests("session/prompt", 1)
+
+        // PlasmaLLM never sends a device its own prompt; this one was typed in the Claude app.
+        host.update("chat-a", agentChunk("Looking…", "msg-1"))
+        host.update("chat-a", userChunk("and the tests too", "app-uuid-1"))
+        host.update("chat-a", agentChunk("Both pass.", "msg-2"))
+        host.answerPrompt(buildJsonObject { put("stopReason", "end_turn") })
+
+        val done = c.waitFor("the end of our turn") { !it.busy && it.items.size == 4 }
+        assertEquals(listOf("look at the build", "Looking…", "and the tests too", "Both pass."), done.items.map { it.text() })
+    }
+
+    @Test
+    fun aTurnFromTheClaudeAppShowsAsRunningHere() = runBlocking {
+        val c = controller { history["chat-a"] = listOf(agentChunk("earlier answer", "msg-0")) }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+
+        // Protocol 5: a message typed in the Claude app, then one Claude starts on its own.
+        host.notify(PlasmaLlm.STATE, chatState("chat-a", "/home/me/project", busy = true))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", userChunk("from the Claude app", "app-uuid-2"))
+        host.update("chat-a", agentChunk("answer one", "msg-3"))
+        val running = c.waitFor("the app's turn") { it.busy && it.remoteTurn && it.items.size == 3 }
+        assertFalse(c.sendPrompt("me too"), "no second prompt into a busy chat")
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        c.waitFor("its end") { !it.busy }
+
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", agentChunk("a background task finished", "msg-4"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        val done = c.waitFor("Claude's own turn") { !it.busy && it.items.size == 4 }
+        assertEquals(
+            listOf("earlier answer", "from the Claude app", "answer one", "a background task finished"),
+            done.items.map { it.text() },
+        )
+        assertEquals(3, running.items.size)
+    }
+
+    @Test
     fun aRealStopStillSaysStopped() = runBlocking {
         val c = controller { holdPrompts = true }
         c.connect(plasmaProfile)
@@ -528,8 +573,9 @@ private fun userChunk(text: String, messageId: String) = buildJsonObject {
     putJsonObject("content") { put("type", "text"); put("text", text) }
 }
 
-private fun agentChunk(text: String) = buildJsonObject {
+private fun agentChunk(text: String, messageId: String? = null) = buildJsonObject {
     put("sessionUpdate", "agent_message_chunk")
+    if (messageId != null) put("messageId", messageId)
     putJsonObject("content") { put("type", "text"); put("text", text) }
 }
 
