@@ -171,7 +171,7 @@ fun SessionSettingsSheet(state: ChatState, actions: ChatActions, onDismiss: () -
                     val plasma = state.plasmaLlm
                     InfoLine(if (state.profile?.kind == ProfileKind.Bridge) "Bridge" else "Runs", state.profile?.address ?: "")
                     if (plasma != null) InfoLine("PlasmaLLM", listOfNotNull(plasma.version, "companion protocol ${plasma.protocol}").joinToString(", "))
-                    InfoLine("Folder", plasma?.chat?.cwd?.ifEmpty { null } ?: state.profile?.cwd ?: "")
+                    InfoLine("Folder", folderOf(state) ?: "")
                     InfoLine("Session", state.sessionId ?: "")
                 }
             }

@@ -218,8 +218,11 @@ private fun connectingText(state: ChatState): String {
     }
 }
 
-/** The project folder: PlasmaLLM's open folder when connected to it. */
-private fun folderOf(state: ChatState): String? =
+/**
+ * The project folder. For PlasmaLLM it's the folder of the chat open there, as its
+ * state says (the saved agent's folder is often empty: "whatever PlasmaLLM has open").
+ */
+internal fun folderOf(state: ChatState): String? =
     state.plasmaLlm?.chat?.cwd?.ifEmpty { null } ?: state.profile?.cwd?.ifEmpty { null }
 
 private fun subtitle(state: ChatState): String {
@@ -310,7 +313,10 @@ private fun EmptyChat(state: ChatState) {
         if (version != null) Text("version $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Working in ${state.profile?.cwd ?: "?"}" + if (state.commands.isNotEmpty()) "\nType / to see the agent's commands." else "",
+            listOfNotNull(
+                folderOf(state)?.let { "Working in $it" },
+                "Type / to see the agent's commands.".takeIf { state.commands.isNotEmpty() },
+            ).joinToString("\n"),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

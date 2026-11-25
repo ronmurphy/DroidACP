@@ -148,6 +148,7 @@ class PlasmaLlmTest {
         assertEquals("/home/me/other", host.requests.last { it.first == "session/load" }.second.str("cwd"))
         assertEquals(listOf("from chat b"), c.waitFor("chat b's history") { it.items.isNotEmpty() }.items.map { it.text() })
         assertEquals("Chat B", s.sessionTitle)
+        assertEquals("/home/me/other", s.plasmaLlm?.chat?.cwd, "the folder shown is the new chat's")
         assertEquals(2, host.requests.count { it.first == "session/load" }, "no load for the empty state")
     }
 
