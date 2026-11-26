@@ -101,6 +101,34 @@ data class TabletStatus(
     /** TabDesk lets DroidACP use the tablet: approved, and not switched off or revoked. */
     val approved: Boolean get() = connected && approval == APPROVED && control != REVOKED
 
+    /** Why TabDesk doesn't let DroidACP use the tablet; null while it does, or isn't connected. */
+    val refusal: Refusal?
+        get() = when {
+            !connected || approved -> null
+            !enabled || reason == SWITCHED_OFF -> Refusal.SwitchedOff
+            approval == LAPSED || reason == LAPSED -> Refusal.Lapsed
+            approval == CERTIFICATE_CHANGED || reason == CERTIFICATE_CHANGED -> Refusal.CertificateChanged
+            control == REVOKED && reason == REVOKED -> Refusal.Revoked
+            else -> Refusal.NotApproved
+        }
+
+    enum class Refusal {
+        /** TabDesk's "Let apps use this tablet" is off. */
+        SwitchedOff,
+
+        /** The approval ran out (it lasts 7 days). */
+        Lapsed,
+
+        /** TabDesk approved another copy of DroidACP, signed with another key (a debug build). */
+        CertificateChanged,
+
+        /** The user revoked DroidACP's approval in TabDesk. */
+        Revoked,
+
+        /** Not approved yet, or asked and waiting. */
+        NotApproved,
+    }
+
     companion object {
         const val APPROVED = "approved"
         const val IDLE = "idle"
@@ -108,6 +136,9 @@ data class TabletStatus(
         const val PAUSED = "paused"
         const val STOPPED = "stopped"
         const val REVOKED = "revoked"
+        const val SWITCHED_OFF = "switched_off"
+        const val LAPSED = "lapsed"
+        const val CERTIFICATE_CHANGED = "certificate_changed"
 
         /** `stopped`'s reason when Stop was pressed on TabDesk's indicator or notification. */
         const val BY_TABDESK = "tabdesk"

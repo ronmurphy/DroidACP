@@ -137,6 +137,28 @@ class JsonRpcConnectionTest {
     }
 
     @Test
+    fun aSecondRequestWithARunningRequestsIdIsStillAnsweredAndSoIsTheFirst() = runBlocking {
+        val sent = CopyOnWriteArrayList<String>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val rpc = JsonRpcConnection(
+            this,
+            { sent += it; true },
+            { _, params ->
+                val which = (params as kotlinx.serialization.json.JsonObject).str("which")
+                if (which == "first") release.await()
+                JsonPrimitive(which)
+            },
+            { _, _ -> },
+        )
+        rpc.receive("""{"jsonrpc":"2.0","id":7,"method":"mcp/message","params":{"which":"first"}}""")
+        rpc.receive("""{"jsonrpc":"2.0","id":7,"method":"mcp/message","params":{"which":"second"}}""")
+        kotlinx.coroutines.withTimeout(5_000) { while (sent.size < 1) delay(10) }
+        release.complete(Unit)
+        kotlinx.coroutines.withTimeout(5_000) { while (sent.size < 2) delay(10) }
+        assertEquals(listOf("second", "first"), sent.map { parse(it)["result"]?.let { r -> (r as JsonPrimitive).content } })
+    }
+
+    @Test
     fun closeFailsPendingRequests() = runBlocking {
         val rpc = JsonRpcConnection(this, { true }, { _, _ -> JsonPrimitive(0) }, { _, _ -> })
         val result = async { runCatching { rpc.request("session/prompt") } }

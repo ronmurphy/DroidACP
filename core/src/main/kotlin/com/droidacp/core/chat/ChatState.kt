@@ -153,6 +153,9 @@ data class ChatState(
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected
+
+    /** [approvalElsewhere] as shown: only during a turn, so one left over never shows after it. */
+    val waitingElsewhere: Set<String> get() = if (busy) approvalElsewhere else emptySet()
     val canChat: Boolean get() = isConnected && sessionId != null && !startingSession
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
     val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"

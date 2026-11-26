@@ -764,6 +764,10 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     @Volatile
     var refuse = false
 
+    /** Answers `initialize`, then closes the connection on `session/load` (restarting, say). */
+    @Volatile
+    var closeOnLoad = false
+
     override fun connect() {
         executor.execute { if (refuse) listener.onClosed("refused", null) else listener.onOpen() }
     }
@@ -848,6 +852,10 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
             }
             "session/load" -> {
                 val sessionId = params.str("sessionId") ?: ""
+                if (closeOnLoad) {
+                    close()
+                    return
+                }
                 if (sessionId in goneChats) {
                     error(id, RpcError(-32602, "That chat no longer exists", buildJsonObject {
                         putJsonObject("plasmallm") { put("reason", "not_found"); put("sessionId", sessionId) }

@@ -126,7 +126,6 @@ class MainActivity : ComponentActivity() {
         app.controller.connect(profile, resumeSessionId = resume, startNew = startNew, resumeCwd = cwd)
     }
 
-    /** Folders are remembered per kind of machine: PlasmaLLM runs on the same kind of computer as a bridge. */
     /**
      * The tablet's relay has to stay connected with the screen off: ask, with Android's own
      * dialog, to leave DroidACP out of battery optimisation (once; nothing if it already is).
@@ -141,6 +140,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Folders are remembered per kind of machine: PlasmaLLM runs on the same kind of computer as a bridge. */
     private fun folderKind(profile: Profile?): ProfileKind? = when (profile?.kind) {
         ProfileKind.Bridge, ProfileKind.PlasmaLlm -> ProfileKind.Bridge
         ProfileKind.Local -> ProfileKind.Local

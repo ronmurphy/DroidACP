@@ -367,7 +367,7 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                 is ChatItem.User -> UserBubble(item)
                 is ChatItem.Agent -> AgentMessage(item)
                 is ChatItem.Thought -> ThoughtView(item, live = state.busy && item === state.items.lastOrNull())
-                is ChatItem.Tool -> ToolCallCard(item.call, waitingElsewhere = item.call.id in state.approvalElsewhere)
+                is ChatItem.Tool -> ToolCallCard(item.call, waitingElsewhere = item.call.id in state.waitingElsewhere)
                 is ChatItem.Note -> NoteView(item)
             }
         }
@@ -380,7 +380,7 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                         when {
                             state.cancelling -> "Stopping…"
                             // An action on this tablet, approved on the phone or the laptop.
-                            state.approvalElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop…"
+                            state.waitingElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop…"
                             // A prompt typed in PlasmaLLM's window or on another device.
                             state.remoteTurn -> "${state.agentName} is working on a message sent from another screen…"
                             else -> "${state.agentName} is working…"

@@ -33,13 +33,15 @@ private fun tabletState(tablet: TabletUse?, connectedHere: Boolean, laptopAllows
     val words = when {
         status.reach == TabletStatus.Reach.Connecting || status.reach == TabletStatus.Reach.Off -> "Connecting to TabDesk…" to false
         !status.connected -> (status.unavailable!!.replaceFirstChar { it.uppercase() } + ".") to false
-        !status.enabled || status.reason == "switched_off" -> "TabDesk: agents are switched off." to true
-        status.approval == "approved" && status.control != TabletStatus.REVOKED -> "TabDesk: Approved." to false
-        status.approval == "lapsed" -> "TabDesk: Approval ran out (it lasts 7 days)." to true
-        status.approval == "certificate_changed" ->
-            "TabDesk approved another copy of DroidACP (a debug build counts as another app)." to true
-        status.reason == "revoked" -> "TabDesk: Approval revoked." to true
-        else -> "TabDesk: Not approved yet." to true
+        else -> when (status.refusal) {
+            null -> "TabDesk: Approved." to false
+            TabletStatus.Refusal.SwitchedOff -> "TabDesk: agents are switched off." to true
+            TabletStatus.Refusal.Lapsed -> "TabDesk: Approval ran out (it lasts 7 days)." to true
+            TabletStatus.Refusal.CertificateChanged ->
+                "TabDesk approved another copy of DroidACP (a debug build counts as another app)." to true
+            TabletStatus.Refusal.Revoked -> "TabDesk: Approval revoked." to true
+            TabletStatus.Refusal.NotApproved -> "TabDesk: Not approved yet." to true
+        }
     }
     val laptop = when {
         laptopAllows == false -> " Turned off on the laptop (PlasmaLLM's “Let the agent use a connected tablet”)."

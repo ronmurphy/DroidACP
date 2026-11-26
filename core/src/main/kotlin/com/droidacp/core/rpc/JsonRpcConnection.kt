@@ -184,6 +184,9 @@ class JsonRpcConnection(
             method != null -> {
                 val requestId: JsonElement = id ?: JsonNull
                 val key = requestId.toString()
+                // Listed for cancelling, unless another request with this id is still running (the
+                // other side's mistake): then it's answered as before, but a cancel only finds the first.
+                var listed = false
                 // Started once it's listed, so a cancel can always find it.
                 val job = scope.launch(start = CoroutineStart.LAZY) {
                     val self = coroutineContext.job
@@ -199,7 +202,7 @@ class JsonRpcConnection(
                     } catch (e: CancellationException) {
                         // Our side is shutting down; tell the agent the request was cancelled
                         // (unless a cancel from the other side already answered it).
-                        if (incoming.remove(key, self)) {
+                        if (!listed || incoming.remove(key, self)) {
                             write(errorMessage(requestId, RpcErrorCodes.REQUEST_CANCELLED, "Request cancelled", null))
                         }
                         throw e
@@ -207,9 +210,9 @@ class JsonRpcConnection(
                         errorMessage(requestId, RpcErrorCodes.INTERNAL_ERROR, e.message ?: e.toString(), null)
                     }
                     // Answered already if it was cancelled meanwhile.
-                    if (incoming.remove(key, self)) write(reply)
+                    if (!listed || incoming.remove(key, self)) write(reply)
                 }
-                incoming[key] = job
+                listed = incoming.putIfAbsent(key, job) == null
                 job.start()
             }
 

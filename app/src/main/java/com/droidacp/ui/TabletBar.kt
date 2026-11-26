@@ -36,15 +36,15 @@ private fun tabletBarText(state: ChatState): TabletBarText? {
         TabletStatus.Reach.Connected -> {}
         else -> return TabletBarText(status.unavailable!!.replaceFirstChar { it.uppercase() } + ".")
     }
-    if (!status.approved) {
-        return when {
-            !status.enabled || status.reason == "switched_off" -> TabletBarText("Agents are switched off in TabDesk.", open)
-            status.approval == "lapsed" -> TabletBarText("TabDesk's approval of DroidACP ran out (it lasts 7 days).", open)
-            status.approval == "certificate_changed" ->
-                TabletBarText("TabDesk approved another copy of DroidACP (a debug build counts as another app). Approve this one.", open)
-            status.reason == "revoked" -> TabletBarText("DroidACP's approval was revoked in TabDesk.", open)
-            else -> TabletBarText("TabDesk hasn't approved DroidACP yet. Approve it in TabDesk → Customize → Agent.", open)
-        }
+    when (status.refusal) {
+        null -> {}
+        TabletStatus.Refusal.SwitchedOff -> return TabletBarText("Agents are switched off in TabDesk.", open)
+        TabletStatus.Refusal.Lapsed -> return TabletBarText("TabDesk's approval of DroidACP ran out (it lasts 7 days).", open)
+        TabletStatus.Refusal.CertificateChanged ->
+            return TabletBarText("TabDesk approved another copy of DroidACP (a debug build counts as another app). Approve this one.", open)
+        TabletStatus.Refusal.Revoked -> return TabletBarText("DroidACP's approval was revoked in TabDesk.", open)
+        TabletStatus.Refusal.NotApproved ->
+            return TabletBarText("TabDesk hasn't approved DroidACP yet. Approve it in TabDesk → Customize → Agent.", open)
     }
     if (!tablet.offered) return TabletBarText("This PlasmaLLM can't use a tablet yet. Update PlasmaLLM on the computer.")
     return when {

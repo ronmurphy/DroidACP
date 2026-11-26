@@ -29,6 +29,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -186,10 +187,15 @@ class AgentController(
 
     fun disconnect() {
         cancelRetry()
-        val l = link ?: return
+        // Also while a reconnect was waiting, when there's no link but TabDesk is still bound.
+        tablet?.link?.setWanted(false)
+        val l = link
+        if (l == null) {
+            _state.update { if (it.tablet != null) it.copy(tablet = null) else it }
+            return
+        }
         link = null
         l.shutdown()
-        tablet?.link?.setWanted(false)
         cancelAllPermissions()
         _state.update {
             it.copy(
@@ -217,10 +223,12 @@ class AgentController(
         val profile = s.profile ?: return
         if (profile.useTablet == on) return
         val updated = profile.copy(useTablet = on)
+        // Not connected, TabDesk waits for the next connection (open() binds it then).
+        val bind = updated.offersTablet && link != null
         _state.update {
             it.copy(
                 profile = updated,
-                tablet = tablet?.takeIf { updated.offersTablet }?.let { t -> it.tablet ?: TabletUse(t.link.status.value) },
+                tablet = tablet?.takeIf { bind }?.let { t -> it.tablet ?: TabletUse(t.link.status.value) },
             )
         }
         // Off: the running calls end as refused (-33001) before TabDesk is let go of.
@@ -228,8 +236,8 @@ class AgentController(
             link?.tabletAllowed(false)
             cancelRetry()
         }
-        tablet?.link?.setWanted(updated.offersTablet)
-        if (updated.offersTablet) link?.tabletAllowed(true)
+        tablet?.link?.setWanted(bind)
+        if (bind) link?.tabletAllowed(true)
     }
 
     // ------------------------------------------------------------------
@@ -369,12 +377,13 @@ class AgentController(
 
     /**
      * The user saved [p]. If it's the agent in use, what can change while connected does:
-     * the tablet setting and quiet mode. The rest takes effect on the next connection.
+     * the tablet setting and quiet mode. The rest takes effect on the next connection,
+     * including a reconnect that's waiting.
      */
     fun profileSaved(p: Profile) {
         if (_state.value.profile?.id != p.id) return
-        _state.update { it.copy(profile = it.profile?.copy(quietHere = p.quietHere)) }
         setTabletAllowed(p.useTablet)
+        _state.update { if (link == null) it.copy(profile = p) else it.copy(profile = it.profile?.copy(quietHere = p.quietHere)) }
     }
 
     /**
@@ -735,7 +744,6 @@ class AgentController(
                 host = hello?.chat?.takeIf { it.sessionId.isNotEmpty() }
                 relay?.offered = hello != null && hello.protocol >= PlasmaLlm.TABLET_PROTOCOL && init.capabilities.mcpOverAcp
                 watchTablet()
-                retries = 0
                 _state.update {
                     it.copy(
                         status = ConnectionStatus.Connected,
@@ -837,6 +845,8 @@ class AgentController(
                     host = if (old?.sessionId == setup.sessionId) old else PlasmaChat(setup.sessionId, cwd.ifEmpty { old?.cwd ?: "" }, null, false)
                     followFailures = 0
                 }
+                // Connected and in a chat: the next drop waits the shortest time again.
+                retries = 0
                 _state.update {
                     it.copy(
                         sessionId = setup.sessionId,
@@ -907,6 +917,9 @@ class AgentController(
                     // It counts whatever the answer. not_open_chat: the laptop has another chat open
                     // by now, which the phone follows as usual.
                     if (e.plasmaReason == PlasmaLlm.Reason.NOT_OPEN_CHAT) other = e.plasmaSessionId
+                } catch (e: ConnectionClosedException) {
+                    // Gone meanwhile; the next connection declares it with its load.
+                    return
                 }
                 r.declared = true
             }
@@ -919,7 +932,19 @@ class AgentController(
             val r = relay ?: return
             r.setAllowed(on)
             publishTablet()
-            if (on) scope.launch { declareAgain() }
+            if (on) startDeclaring()
+        }
+
+        /**
+         * Asks to declare again. TabDesk's state can change often while one runs: they run one
+         * at a time, and asks made meanwhile make one more run after it, never a missed one.
+         */
+        private val declareAsks = Channel<Unit>(Channel.CONFLATED)
+        private val declarer by lazy { scope.launch { for (ask in declareAsks) declareAgain() } }
+
+        private fun startDeclaring() {
+            declarer.start()
+            declareAsks.trySend(Unit)
         }
 
         /** DroidACP's Stop: the agent's use of the tablet stops too, until the user's next message. */
@@ -956,7 +981,7 @@ class AgentController(
                 stoppedOnTablet(r)
             }
             publishTablet()
-            if (r.declarable && !r.declared && opened) scope.launch { declareAgain() }
+            if (r.declarable && !r.declared && opened) startDeclaring()
         }
 
         /**

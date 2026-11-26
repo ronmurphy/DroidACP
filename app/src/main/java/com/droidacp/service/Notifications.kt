@@ -45,7 +45,7 @@ object Notifications {
         state.status is ConnectionStatus.Failed -> "Disconnected"
         state.status is ConnectionStatus.Disconnected -> "Not connected"
         state.permissions.isNotEmpty() -> "Needs your permission"
-        state.approvalElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop"
+        state.waitingElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop"
         state.cancelling -> "Stopping…"
         state.busy -> "Working…"
         state.authRequired -> "Sign-in needed"

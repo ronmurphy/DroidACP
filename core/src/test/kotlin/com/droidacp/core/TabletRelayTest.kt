@@ -512,6 +512,75 @@ class TabletRelayTest {
     }
 
     @Test
+    fun disconnectingWhileAReconnectWaitsLetsGoOfTabDesk() = runBlocking {
+        val c = controller(reconnect = listOf(60_000L))
+        c.connect(profile)
+        c.joined("chat-a")
+        host.close()
+        c.waitFor("waiting to try again") { it.reconnecting }
+        assertEquals(true, tabdesk.wanted.last(), "still bound while it waits")
+        c.disconnect()
+        assertEquals(false, tabdesk.wanted.last())
+        assertNull(c.state.value.tablet)
+        assertFalse(c.state.value.reconnecting)
+    }
+
+    @Test
+    fun turningTheSettingOnWhileNotConnectedWaitsForTheNextConnection() = runBlocking {
+        val c = controller()
+        c.connect(profile.copy(useTablet = false))
+        c.joined("chat-a")
+        c.disconnect()
+        val before = tabdesk.wanted.size
+        c.profileSaved(profile)
+        assertTrue(tabdesk.wanted.drop(before).none { it }, "not bound with nothing connected")
+        assertNull(c.state.value.tablet)
+        assertTrue(c.state.value.profile?.useTablet == true)
+    }
+
+    @Test
+    fun anEditSavedWhileAReconnectWaitsIsUsedByIt() = runBlocking {
+        val urls = CopyOnWriteArrayList<String>()
+        val c = AgentController(scope, "test", tablet = Tablet(tabdesk, SERVER_ID), reconnectDelaysMs = listOf(100L)) { p, listener ->
+            urls += p.url
+            FakePlasmaLlm(listener).apply { protocol = 7 }.also { hosts += it }
+        }
+        c.connect(profile)
+        c.joined("chat-a")
+        host.close()
+        c.waitFor("waiting to try again") { it.reconnecting }
+        c.profileSaved(profile.copy(url = "new-laptop"))
+        waitUntil("a second connection") { hosts.size == 2 }
+        assertEquals(listOf("my-laptop", "new-laptop"), urls.toList())
+    }
+
+    @Test
+    fun aConnectionDroppedBeforeAChatOpensWaitsLongerEachTime() = runBlocking {
+        val c = controller(reconnect = listOf(50L, 400L)) { protocol = 7; closeOnLoad = hosts.size < 2 } // counted before this one joins
+        val started = System.nanoTime()
+        c.connect(profile)
+        waitUntil("a third connection") { hosts.size == 3 }
+        val tookMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue(tookMs >= 450, "initialize answered doesn't reset the wait: 50 then 400 ms, took $tookMs")
+        c.joined("chat-a")
+        Unit
+    }
+
+    @Test
+    fun tabDesksRefusalIsNamedTheSameWhereverItShows() {
+        fun s(approval: String?, control: String?, reason: String?, enabled: Boolean = true) =
+            TabletStatus(TabletStatus.Reach.Connected, enabled = enabled, approval = approval, control = control, reason = reason)
+        assertNull(s("approved", "idle", "").refusal)
+        assertNull(TabletStatus(TabletStatus.Reach.Lost).refusal, "not connected: no refusal, unavailable says why")
+        assertEquals(TabletStatus.Refusal.SwitchedOff, s("approved", "revoked", "switched_off", enabled = false).refusal)
+        assertEquals(TabletStatus.Refusal.Lapsed, s("lapsed", "revoked", "lapsed").refusal)
+        assertEquals(TabletStatus.Refusal.Lapsed, s("approved", "revoked", "lapsed").refusal, "the control state's reason counts too")
+        assertEquals(TabletStatus.Refusal.CertificateChanged, s("certificate_changed", "revoked", "certificate_changed").refusal)
+        assertEquals(TabletStatus.Refusal.Revoked, s("none", "revoked", "revoked").refusal)
+        assertEquals(TabletStatus.Refusal.NotApproved, s("asked", "revoked", "not_approved").refusal)
+    }
+
+    @Test
     fun theBarsStopReachesTabDeskWithoutATurnRunningHere() = runBlocking {
         val c = controller()
         c.connect(profile)
