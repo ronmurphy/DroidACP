@@ -30,12 +30,17 @@ object PlasmaLlm {
      * understands. From 2, PlasmaLLM lets it offer this tablet's tools (see [TABLET_UNAVAILABLE]);
      * 3 to 7 added only things PlasmaLLM sends every client, which DroidACP handles; 8, the
      * tabs' chats in `_plasmallm/state` ([PlasmaTab]); 9, what each tab's agent is doing; 10,
-     * the look each agent chose for its Pixel Person ([PlasmaPerson]); 11, its shirt colour.
+     * the look each agent chose for its Pixel Person ([PlasmaPerson]); 11, its shirt colour; 12,
+     * a tablet call names the tab that made it, which may be a back tab; 13, `session/cancel`
+     * stops any tab's turn ([CANCEL_ANY_TAB]).
      */
-    const val PROTOCOL = 11
+    const val PROTOCOL = 13
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
+
+    /** `session/cancel` with any tab's chat stops that tab's turn (protocol 13); before, only the front tab's. */
+    const val CANCEL_ANY_TAB = 13
 
     /** PlasmaLLM's phone access listens here unless the user changed it (the bridge uses 8765). */
     const val DEFAULT_PORT = 8766

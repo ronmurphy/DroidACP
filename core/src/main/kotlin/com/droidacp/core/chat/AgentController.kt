@@ -1165,16 +1165,23 @@ class AgentController(
         }
 
         /**
-         * Stop was pressed on TabDesk: cancel the turn that used the tablet. PlasmaLLM cancels
-         * the turn of the chat it has in front, so only when that's the one the calls came from.
+         * Stop was pressed on TabDesk: cancel the turn that used the tablet, the one the last
+         * call came from. Before protocol 13, PlasmaLLM cancels only the chat it has in front,
+         * so a back tab's turn goes on there (TabDesk still refuses its calls).
          */
         private fun stoppedOnTablet(r: TabletRelay) {
             val s = _state.value
             val shown = s.sessionId ?: return
-            if ((r.lastSessionId ?: shown) != shown || !s.busy) return
-            client.cancel(shown)
-            cancelAllPermissions()
-            _state.update { it.copy(cancelling = true, permissions = emptyList()) }
+            val from = r.lastSessionId ?: shown
+            if (from == shown) {
+                if (!s.busy) return
+                client.cancel(shown)
+                cancelAllPermissions()
+                _state.update { it.copy(cancelling = true, permissions = emptyList()) }
+            } else if ((s.plasmaLlm?.protocol ?: 0) >= PlasmaLlm.CANCEL_ANY_TAB && s.plasmaLlm?.tabs?.any { it.sessionId == from } == true) {
+                // Another tab's turn: PlasmaLLM stops it in its tab, and this chat goes on.
+                client.cancel(from)
+            }
         }
 
         fun publishTablet() {
