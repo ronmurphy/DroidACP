@@ -117,6 +117,9 @@ interface ChatActions {
     /** 🛑 in the message box while the agent works: stop it, and put the tablet on hold (plan D22). */
     fun halt()
 
+    /** From a device that isn't the tablet: send "Let the tablet go on", which lifts a hold (plan D23). */
+    fun letTabletGoOn()
+
     /** TabDesk → Customize → Agent, where DroidACP is approved. */
     fun openTabDesk()
 }
@@ -132,6 +135,7 @@ fun ChatScreen(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var confirmRelease by remember { mutableStateOf(false) }
+    var confirmRemoteRelease by remember { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     // Opened from the context bar: shown at "Context".
     var settingsAtContext by rememberSaveable { mutableStateOf(false) }
@@ -202,6 +206,14 @@ fun ChatScreen(
                                             onClick = { menuOpen = false; actions.holdTablet() },
                                         )
                                     }
+                                }
+                                if (state.offersRemoteRelease) {
+                                    // PlasmaLLM takes no message during a turn.
+                                    DropdownMenuItem(
+                                        text = { Text("Let the tablet go on…") },
+                                        enabled = !state.busy,
+                                        onClick = { menuOpen = false; confirmRemoteRelease = true },
+                                    )
                                 }
                                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menuOpen = false; actions.disconnect() })
                             } else if (state.status !is ConnectionStatus.Connecting) {
@@ -287,6 +299,15 @@ fun ChatScreen(
         OpenElsewhereDialog(elsewhere, onAnswer = { choice ->
             if (choice == null) actions.answerOpenElsewhere(null) else switchChat { actions.answerOpenElsewhere(choice) }
         })
+    }
+    if (confirmRemoteRelease) {
+        LetTabletGoOnDialog(
+            onSend = {
+                confirmRemoteRelease = false
+                actions.letTabletGoOn()
+            },
+            onDismiss = { confirmRemoteRelease = false },
+        )
     }
     if (confirmRelease) {
         ReleaseTabletDialog(

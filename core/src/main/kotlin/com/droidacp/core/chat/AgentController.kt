@@ -455,6 +455,13 @@ class AgentController(
     }
 
     /**
+     * The menu's "Let the tablet go on…" on a device that isn't the tablet (plan D23): sends
+     * [TabletRelay.RELEASE_MESSAGE], which the tablet's DroidACP takes as the user's own lift,
+     * since a person sent it. False if it can't be sent now (a turn is running).
+     */
+    fun askTabletToGoOn(): Boolean = sendPrompt(TabletRelay.RELEASE_MESSAGE)
+
+    /**
      * 🛑 in the message box, while the agent is working (plan D22): stop the turn, and put the
      * tablet on hold, from any device. PlasmaLLM takes no message during a turn, so the turn is
      * stopped first and a 🛑 message goes as soon as it has ended; the DroidACP that offers the
@@ -563,6 +570,8 @@ class AgentController(
         l.ownTurn = sessionId
         // 🛑 typed here holds the tablet before the turn could let it go on.
         l.holdIfAsked(text)
+        // "Let the tablet go on" typed here, by the person holding this device.
+        l.releaseIfAsked(text, elsewhere = false)
         // The user sent a message: the tablet may go on after a Stop.
         l.userTurn()
 
@@ -754,6 +763,14 @@ class AgentController(
         /** The chat a prompt we sent is running in (so PlasmaLLM's turn notifications for it are ours, not remote). */
         @Volatile
         var ownTurn: String? = null
+
+        /**
+         * A person started the running turn (`_plasmallm/turn` `by: "user"`, which comes before
+         * its message); false between turns and for one PlasmaLLM or Claude started by itself.
+         * Only then can a message let a held tablet go on (D23).
+         */
+        @Volatile
+        private var turnByUser = false
 
         /** The first item key of the remote turn running, to tell whether it showed anything but notes. */
         @Volatile
@@ -1093,6 +1110,19 @@ class AgentController(
             hold(cancelTurnUsingIt = false)
         }
 
+        /**
+         * A message that lets the tablet go on after a hold (`TabletRelay.isReleaseMessage`, D23),
+         * which a person sent: typed here, or [elsewhere] in a turn PlasmaLLM says a person
+         * started. On the device whose tablet it is, as for a hold.
+         */
+        fun releaseIfAsked(text: String, elsewhere: Boolean) {
+            if (relay?.allowed != true || tablet?.held?.value != true) return
+            if (PlasmaLlm.isAgentNote(text) || !TabletRelay.isReleaseMessage(text)) return
+            releaseTablet()
+            val where = if (elsewhere) "by your message from another device" else "by your message"
+            _state.update { Transcript.addNote(it, "Let go on $where: the agent can use this tablet again.") }
+        }
+
         /** The tablet was put on hold: running calls end refused, and the bar says so. */
         fun tabletHeld() {
             relay?.hold()
@@ -1223,7 +1253,10 @@ class AgentController(
             // 🛑 typed on another device (the phone, the laptop, the Claude app). Not one replayed
             // from the chat's history, which would hold the tablet each time the chat opens.
             if (update is SessionUpdate.UserMessageChunk && !_state.value.replaying) {
-                (update.content as? ContentBlock.Text)?.text?.let { holdIfAsked(it) }
+                (update.content as? ContentBlock.Text)?.text?.let {
+                    holdIfAsked(it)
+                    if (turnByUser) releaseIfAsked(it, elsewhere = true)
+                }
             }
             _state.update { s ->
                 // Accept updates for our session, or before we know our session id (they can race the response).
@@ -1274,6 +1307,9 @@ class AgentController(
         }
 
         private fun onHostTurn(turn: PlasmaEvent.Turn) {
+            // Set for the turn's own message, which follows; cleared when it ends, so a message
+            // whose turn wasn't said to be a person's never counts as one.
+            turnByUser = turn.byUser
             // Whichever chat it's in: a message a person sent lets the tablet go on after a Stop.
             if (turn.byUser) userTurn()
             val s = _state.value

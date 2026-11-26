@@ -213,12 +213,19 @@ class TabletRelay(
          * available right now: " and this.
          */
         const val HELD = "it's on hold (🛑), set in DroidACP on the tablet or by a 🛑 message in the chat. " +
-            "Nothing on it can be read or used until someone taps “Let it go on” in DroidACP on the tablet; " +
-            "asking again, another way, a message, or Continue on TabDesk's notification won't lift it. " +
-            "Tell the user it's on hold, and where it's lifted."
+            "Nothing on it can be read or used until the user lets it go on: “Let it go on” in DroidACP on the tablet, " +
+            "or the user's own message “let the tablet go on” from any device. Asking again, another way, " +
+            "a message you or PlasmaLLM sends, or Continue on TabDesk's notification won't lift it. " +
+            "Tell the user it's on hold, and how it's lifted."
 
         /** Whole messages, besides any starting with 🛑, that put the tablet on hold. */
         private val HOLD_PHRASES = setOf("stop the device", "stop the tablet", "hold the device", "hold the tablet")
+
+        /** Whole messages that let a held tablet go on (plan D23), with or without a 🟢 first. */
+        private val RELEASE_PHRASES = setOf("let the tablet go on", "let the device go on", "release the tablet", "release the device")
+
+        /** What the phone's "Let the tablet go on…" sends. */
+        const val RELEASE_MESSAGE = "Let the tablet go on"
 
         /**
          * A message that puts this tablet on hold (plan D21), from whichever device it was typed
@@ -231,6 +238,17 @@ class TabletRelay(
             val t = text.trim()
             if (t.startsWith("🛑")) return true
             return t.lowercase().trimEnd('.', '!', ' ') in HOLD_PHRASES
+        }
+
+        /**
+         * A message that lets this tablet go on after a hold (plan D23): just "let the tablet go
+         * on" or "release the tablet" (or the device), whole, so "don't let the tablet go on"
+         * doesn't. It counts only when a person sent it (PlasmaLLM's `by: "user"`), never one
+         * PlasmaLLM or the agent sent (wake_me, notes, Claude's own turns): the caller checks.
+         */
+        fun isReleaseMessage(text: String): Boolean {
+            val t = text.trim().removePrefix("🟢").removePrefix("\uFE0F").trim()
+            return t.lowercase().trimEnd('.', '!', ' ') in RELEASE_PHRASES
         }
     }
 }

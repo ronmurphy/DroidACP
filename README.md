@@ -211,9 +211,12 @@ starts, so the tablet works in chats started after both are on.
 - **🛑 from anywhere:** a message starting with 🛑, or one that's just "stop the tablet"
   (or "stop the device", "hold the tablet"), puts the tablet on hold too, whichever
   device you send it from: your phone, the laptop, the Claude app. The tablet's DroidACP
-  sees the message in the chat and holds itself; the phone needs no TabDesk. A message
-  can't lift a hold (the agent can have messages sent for it), so that stays a tap on
-  the tablet.
+  sees the message in the chat and holds itself; the phone needs no TabDesk.
+- **Lifting a hold from anywhere:** the message **"let the tablet go on"** (or "release
+  the tablet"), whole, lets it go on again, sent from any device, or from the phone's ⋮
+  menu → **Let the tablet go on…**, which asks first. It counts only when a person sent it:
+  PlasmaLLM marks every turn as a person's or its own, so the same words from the agent
+  (a wake_me, a note, a turn Claude starts by itself) or from the chat's history do nothing.
 - **🛑 in the message box**, beside stop while the agent is working in a PlasmaLLM chat,
   on every device, the phone too: it stops the agent's reply, then sends a 🛑, which puts
   the tablet on hold as above. PlasmaLLM takes no message while the agent works, so the

@@ -133,6 +133,26 @@ private fun HoldButton(onHold: () -> Unit) {
     ) { Text("🛑 Hold", color = MaterialTheme.colorScheme.error) }
 }
 
+/**
+ * Asked before "Let the tablet go on" is sent from another device (plan D23): the message lifts
+ * a hold on the tablet, so a stray tap on the menu shouldn't be enough.
+ */
+@Composable
+fun LetTabletGoOnDialog(onSend: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Let the agent use the tablet again?") },
+        text = {
+            Text(
+                "This sends “Let the tablet go on” to the chat. If the tablet is on hold (🛑), it lets the agent " +
+                    "read the screen of the apps you allowed in TabDesk, take screenshots of them, and open them again.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onSend) { Text("Let it go on") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep on hold") } },
+    )
+}
+
 /** Asked before a hold is lifted, from the bar or the chat's menu: a tap on it shouldn't be enough. */
 @Composable
 fun ReleaseTabletDialog(onRelease: () -> Unit, onDismiss: () -> Unit) {

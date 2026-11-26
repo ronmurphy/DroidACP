@@ -167,6 +167,12 @@ data class ChatState(
      * chat whose agent may use a tablet, on any device, with TabDesk or without.
      */
     val canHalt: Boolean get() = busy && !halting && canChat && plasmaLlm != null && plasmaLlm.tabletTools != false
+
+    /**
+     * "Let the tablet go on…" is offered in the menu (plan D23): a PlasmaLLM chat whose agent
+     * may use a tablet, on a device that isn't the tablet (that one lifts its hold itself).
+     */
+    val offersRemoteRelease: Boolean get() = canChat && tablet == null && plasmaLlm != null && plasmaLlm.tabletTools != false
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
     val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"
 

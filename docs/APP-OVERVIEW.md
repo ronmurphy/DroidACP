@@ -363,7 +363,15 @@ reads only their envelope; TabDesk decides what's allowed.
   offers it: typed here (`sendPrompt`, before `userTurn()`), or typed elsewhere and seen
   as a `user_message_chunk`, but not one replayed by `session/load` (`replaying`), nor a
   note from another tab's agent. It doesn't cancel the turn, which is usually the
-  message's own. No message lifts a hold.
+  message's own.
+- **Lifting by message** (plan D23). `TabletRelay.isReleaseMessage` ("let the tablet go
+  on", "release the tablet", whole) lifts a hold on the device that offers the tablet,
+  through `Link.releaseIfAsked`: typed here, or seen as a `user_message_chunk` while
+  `turnByUser`, set from the turn's `_plasmallm/turn` `started` `by: "user"` and cleared
+  when it ends. So never one PlasmaLLM or Claude sent (`by: "app"`: wake_me, notes,
+  Claude's own turns), one in a turn not said to be a person's, a replayed one, or an
+  agent's note. `ChatState.offersRemoteRelease` puts "Let the tablet go on…" in the menu
+  of a device without the tablet; it sends `RELEASE_MESSAGE` after a confirm.
 - **🛑 in the message box** (plan D22). `ChatState.canHalt`: while a turn runs in a
   PlasmaLLM chat whose `tabletTools` isn't off, on any device. `AgentController.halt()`
   holds this tablet at once if it offers one (`holdIfAsked`), cancels the turn, then sends
