@@ -391,7 +391,8 @@ class TabletRelayTest {
         c.waitFor("busy") { it.busy }
         c.cancelTurn()
         assertEquals(1, tabdesk.stops.get())
-        assertTrue(host.requests.any { it.first == "session/cancel" })
+        // The fake records requests on its own thread.
+        waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" } }
         c.waitFor("the bar says stopped") { it.tablet?.stopped == true }
 
         host.answerPrompt(buildJsonObject { put("stopReason", "cancelled") })
