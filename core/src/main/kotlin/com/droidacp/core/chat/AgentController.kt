@@ -116,6 +116,14 @@ class AgentController(
     @Volatile
     private var retries = 0
 
+    /**
+     * The user disconnected: nothing connects again by itself until they connect. Checked again
+     * when a wait ends, because a drop at the same moment can schedule one just after
+     * [disconnect] has cancelled what was waiting.
+     */
+    @Volatile
+    private var userDisconnected = false
+
     /** An edit of the connected agent, saved while connected: the next connection uses it, a reconnect too. */
     private var savedWhileConnected: Profile? = null
 
@@ -140,6 +148,7 @@ class AgentController(
         startNew: Boolean = false,
         resumeCwd: String? = null,
     ) {
+        userDisconnected = false
         cancelRetry()
         open(profile, resumeSessionId, keepTranscript, startNew, resumeCwd)
     }
@@ -192,6 +201,7 @@ class AgentController(
     }
 
     fun disconnect() {
+        userDisconnected = true
         cancelRetry()
         // Also while a reconnect was waiting, when there's no link but TabDesk is still bound.
         tablet?.link?.setWanted(false)
@@ -439,6 +449,7 @@ class AgentController(
 
     /** Wait, then connect again to the same agent and chat: the tablet should stay reachable. */
     private fun scheduleReconnect(profile: Profile) {
+        if (userDisconnected) return
         val wait = reconnectDelaysMs[minOf(retries, reconnectDelaysMs.size - 1)]
         retries++
         _state.update { it.copy(reconnecting = true) }
@@ -446,8 +457,8 @@ class AgentController(
             kotlinx.coroutines.delay(wait)
             val s = _state.value
             val current = s.profile
-            // Something else connected meanwhile, or the setting went off.
-            if (link != null || current?.id != profile.id || !current.offersTablet) {
+            // The user disconnected, something else connected meanwhile, or the setting went off.
+            if (userDisconnected || link != null || current?.id != profile.id || !current.offersTablet) {
                 _state.update { it.copy(reconnecting = false) }
                 return@launch
             }
@@ -760,7 +771,7 @@ class AgentController(
             // The tablet's relay needs the connection: make it again by itself, unless the other
             // end refused it (a rejected token, an invalid address), which trying again won't change.
             val again = current != null && current.id == profile.id && current.offersTablet && tablet != null &&
-                error !is ConnectionRefusedException
+                error !is ConnectionRefusedException && !userDisconnected
             val wasRetrying = retries > 0
             _state.update {
                 it.copy(
