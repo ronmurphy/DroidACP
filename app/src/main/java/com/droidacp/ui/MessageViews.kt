@@ -164,7 +164,7 @@ fun NoteView(item: ChatItem.Note) {
         ChatItem.Severity.Info -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Text(
-        text = item.text,
+        text = item.text.trim(),
         style = MaterialTheme.typography.bodySmall,
         color = color,
         textAlign = TextAlign.Center,

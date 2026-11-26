@@ -13,16 +13,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,18 +47,29 @@ import androidx.compose.ui.unit.sp
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.acp.ToolContent
+import com.droidacp.core.chat.ToolSize
 import com.droidacp.core.chat.displayTitle
 import com.droidacp.core.diff.LineDiff
 
 /**
  * One tool call (read a file, run a command, edit...). Collapsed it shows the
  * title and status; tap to see its input, output and any diffs.
+ *
+ * A card whose details are long (over [ToolSize.LONG_LINES] lines) stays closed, says
+ * how long ("120 lines", or "+12 −3" for file edits), and opens full screen: long output
+ * is easier to read there, and a long chat stays light, since closed cards aren't drawn.
  */
 @Composable
 fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: Boolean = false) {
-    // Edits are interesting enough to show open by default.
+    // Edits are interesting enough to show open by default (when short).
     val hasDiff = call.content.any { it is ToolContent.Diff }
     var expanded by rememberSaveable(call.id) { mutableStateOf(startExpanded || hasDiff) }
+    var fullScreen by rememberSaveable(call.id) { mutableStateOf(false) }
+    val lines = remember(call) { ToolSize.detailLines(call) }
+    val long = lines > ToolSize.LONG_LINES
+    val stat = remember(call) { if (long) ToolSize.diffStat(call) else null }
+    // A card that grows long while running closes, and opens full screen from then on.
+    val open = expanded && !long
 
     OutlinedCard(
         shape = RoundedCornerShape(12.dp),
@@ -62,7 +81,9 @@ fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: B
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickable(onClickLabel = if (long) "Open full screen" else null) {
+                    if (long) fullScreen = true else expanded = !expanded
+                }
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             Text(kindIcon(call.kind), fontSize = 16.sp)
@@ -71,45 +92,108 @@ fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: B
                 text = call.displayTitle,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
-                maxLines = if (expanded) 6 else 1,
+                maxLines = if (open) 6 else 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (long) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stat?.let { "+${it.added} −${it.removed}" } ?: "$lines lines",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            StatusBadge(call.status)
+            Icon(
+                when {
+                    long -> Icons.AutoMirrored.Filled.KeyboardArrowRight
+                    open -> Icons.Default.KeyboardArrowUp
+                    else -> Icons.Default.KeyboardArrowDown
+                },
+                contentDescription = when {
+                    long -> "Open full screen"
+                    open -> "Collapse"
+                    else -> "Expand"
+                },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (open) {
+            ToolDetails(call, wrap = false, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp))
+        }
+    }
+    if (fullScreen) ToolDetailsSheet(call, onDismiss = { fullScreen = false })
+}
+
+/** What a card shows when open: locations, input, content and output. */
+@Composable
+private fun ToolDetails(call: ToolCall, wrap: Boolean, modifier: Modifier = Modifier) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier) {
+        for (location in call.locations) {
+            val line = location.line
+            Text(
+                text = if (line != null) "${location.path}:$line" else location.path,
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        val input = call.rawInput
+        if (input != null && (call.content.isEmpty() || call.kind == "execute")) {
+            MonoBox(input, label = "Input", wrap = wrap)
+        }
+        for (content in call.content) ToolContentView(content, wrap = wrap)
+        val output = call.rawOutput
+        if (output != null && call.content.isEmpty()) MonoBox(output, label = "Output", wrap = wrap)
+        if (call.content.isEmpty() && input == null && output == null) {
+            Text("No details yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
+ * A long card's details, full screen. Lines wrap to the screen by default; code that
+ * reads better unbroken can scroll sideways instead. It follows the call live, so a
+ * command still running keeps adding its output here.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ToolDetailsSheet(call: ToolCall, onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var wrap by rememberSaveable { mutableStateOf(true) }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+        ) {
+            Text(kindIcon(call.kind), fontSize = 16.sp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = call.displayTitle,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
             StatusBadge(call.status)
-            Icon(
-                if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
         }
-
-        if (expanded) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-            ) {
-                for (location in call.locations) {
-                    val line = location.line
-                    Text(
-                        text = if (line != null) "${location.path}:$line" else location.path,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                val input = call.rawInput
-                if (input != null && (call.content.isEmpty() || call.kind == "execute")) {
-                    MonoBox(input, label = "Input")
-                }
-                for (content in call.content) ToolContentView(content)
-                val output = call.rawOutput
-                if (output != null && call.content.isEmpty()) MonoBox(output, label = "Output")
-                if (call.content.isEmpty() && input == null && output == null) {
-                    Text("No details yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+        TextButton(onClick = { wrap = !wrap }, modifier = Modifier.padding(start = 8.dp)) {
+            Text(if (wrap) "Scroll long lines sideways" else "Wrap long lines")
         }
+        ToolDetails(
+            call,
+            wrap = wrap,
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+        )
     }
 }
 
@@ -123,30 +207,43 @@ private fun StatusBadge(status: String) {
     }
 }
 
-/** [wrap]: break long lines instead of scrolling sideways (the permission dialog, where nothing may be hidden). */
+/**
+ * [wrap]: break long lines instead of scrolling sideways. [whole]: show very long lines
+ * whole instead of cutting them (the permission dialog, where nothing may be hidden).
+ */
 @Composable
-fun ToolContentView(content: ToolContent, wrap: Boolean = false) {
+fun ToolContentView(content: ToolContent, wrap: Boolean = false, whole: Boolean = false) {
     when (content) {
         is ToolContent.Block -> when (val block = content.block) {
             is ContentBlock.Text -> {
                 // Tool output is usually code-ish; markdown if it looks like markdown.
-                if (block.text.contains("```") || block.text.startsWith("#")) MarkdownText(block.text) else MonoBox(block.text, wrap = wrap)
+                if (block.text.contains("```") || block.text.startsWith("#")) {
+                    MarkdownText(block.text)
+                } else {
+                    MonoBox(block.text, wrap = wrap, whole = whole)
+                }
             }
             is ContentBlock.Image -> AgentImage(block)
             is ContentBlock.ResourceLink -> Text("📎 ${block.title ?: block.name}", style = MaterialTheme.typography.bodyMedium)
-            is ContentBlock.Resource -> MonoBox(block.text ?: block.uri, label = fileName(block.uri), wrap = wrap)
+            is ContentBlock.Resource -> MonoBox(block.text ?: block.uri, label = fileName(block.uri), wrap = wrap, whole = whole)
             else -> Text("(unsupported content)", style = MaterialTheme.typography.bodySmall)
         }
-        is ToolContent.Diff -> DiffView(content, wrap = wrap)
+        is ToolContent.Diff -> DiffView(content, wrap = wrap, whole = whole)
         is ToolContent.Terminal -> Text("Terminal output is shown on the agent's computer.", style = MaterialTheme.typography.bodySmall)
         is ToolContent.SessionRef -> Text("Sub-agent session ${content.sessionId.take(8)}…", style = MaterialTheme.typography.bodySmall)
     }
 }
 
-/** Monospace text in a tinted box, scrollable sideways (or wrapped, with [wrap]), with a size cap for huge outputs. */
+/**
+ * Monospace text in a tinted box, scrollable sideways (or wrapped, with [wrap]), with a
+ * size cap for huge outputs. Very long lines are cut, unless [whole].
+ */
 @Composable
-fun MonoBox(text: String, label: String? = null, wrap: Boolean = false) {
-    val shown = remember(text) { if (text.length > MAX_MONO_CHARS) text.take(MAX_MONO_CHARS) + "\n… (${text.length - MAX_MONO_CHARS} more characters)" else text }
+fun MonoBox(text: String, label: String? = null, wrap: Boolean = false, whole: Boolean = false) {
+    val shown = remember(text, whole) {
+        val capped = if (text.length > MAX_MONO_CHARS) text.take(MAX_MONO_CHARS) + "\n… (${text.length - MAX_MONO_CHARS} more characters)" else text
+        if (whole) capped else ToolSize.clipLongLines(capped)
+    }
     Column {
         if (label != null) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -168,7 +265,7 @@ fun MonoBox(text: String, label: String? = null, wrap: Boolean = false) {
 
 /** A file change. [showPath] = false when the path is already shown just above (the permission dialog). */
 @Composable
-fun DiffView(diff: ToolContent.Diff, wrap: Boolean = false, showPath: Boolean = true) {
+fun DiffView(diff: ToolContent.Diff, wrap: Boolean = false, showPath: Boolean = true, whole: Boolean = false) {
     val hunks = remember(diff) { LineDiff.hunks(LineDiff.diff(diff.oldText, diff.newText)) }
     val isNewFile = diff.oldText == null
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -202,7 +299,8 @@ fun DiffView(diff: ToolContent.Diff, wrap: Boolean = false, showPath: Boolean = 
                             LineDiff.Kind.Same -> "  "
                         }
                         val number = (line.newNumber ?: line.oldNumber)?.toString()?.padStart(4) ?: "    "
-                        DiffLineText("$number $prefix${line.text}", line.kind, wrap)
+                        val text = if (whole) line.text else ToolSize.clipLine(line.text)
+                        DiffLineText("$number $prefix$text", line.kind, wrap)
                     }
                 }
                 if (shownLines >= MAX_DIFF_LINES) DiffLineText("   … diff truncated", null, wrap)

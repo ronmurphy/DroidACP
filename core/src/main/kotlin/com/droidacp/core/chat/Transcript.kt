@@ -2,6 +2,7 @@ package com.droidacp.core.chat
 
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.Plan
+import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.acp.SessionUpdate
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.acp.ToolCallPatch
@@ -85,6 +86,7 @@ object Transcript {
     // --- helpers ---
 
     private fun appendAgent(state: ChatState, content: ContentBlock, messageId: String?): ChatState {
+        if (messageId != null && messageId.startsWith(PlasmaLlm.REMOTE_CONTROL_MESSAGE)) return appendNotice(state, content, messageId)
         val last = state.items.lastOrNull()
         if (last is ChatItem.Agent && sameMessage(last.messageId, messageId)) {
             val updated = when (content) {
@@ -98,6 +100,16 @@ object Transcript {
             else -> ChatItem.Agent(state.nextKey, messageId, "", listOf(content))
         }
         return state.copy(items = state.items + item, nextKey = state.nextKey + 1)
+    }
+
+    /** The answer to PlasmaLLM's Remote Control switch, as a note; its chunks join into one. */
+    private fun appendNotice(state: ChatState, content: ContentBlock, messageId: String): ChatState {
+        val text = (content as? ContentBlock.Text)?.text ?: return state
+        val last = state.items.lastOrNull()
+        if (last is ChatItem.Note && last.messageId == messageId) {
+            return state.copy(items = state.items.dropLast(1) + last.copy(text = last.text + text))
+        }
+        return state.copy(items = state.items + ChatItem.Note(state.nextKey, text, messageId = messageId), nextKey = state.nextKey + 1)
     }
 
     private fun appendThought(state: ChatState, content: ContentBlock, messageId: String?): ChatState {

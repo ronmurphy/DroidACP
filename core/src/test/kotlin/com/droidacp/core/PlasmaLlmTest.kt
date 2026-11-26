@@ -465,6 +465,37 @@ class PlasmaLlmTest {
     }
 
     @Test
+    fun theRemoteControlSwitchsAnswerIsANoteNotAReply() = runBlocking {
+        val c = controller { history["chat-a"] = listOf(agentChunk("the last answer", "msg-1")) }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val events = scope.eventsOf(c)
+
+        // PlasmaLLM's switch sends /remote-control; the answer has its own messageId.
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", agentChunk("\nRemote Control is active. ", "plasmallm-remote-control-1"))
+        host.update("chat-a", agentChunk("Open it at https://claude.ai/code/x", "plasmallm-remote-control-1"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        val done = c.waitFor("the note") { !it.busy && it.items.size == 2 }
+        assertEquals(listOf("the last answer", "\nRemote Control is active. Open it at https://claude.ai/code/x"), done.items.map { it.text() })
+        assertTrue(done.items[1] is ChatItem.Note)
+
+        // Turned off later: a second note, not added to the first.
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", agentChunk("Remote Control is off.", "plasmallm-remote-control-2"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        c.waitFor("the second note") { !it.busy && it.items.size == 3 }
+        delay(100)
+        assertTrue(events.none { it is AgentEvent.TurnFinished }, "no \"finished\" for a switch: $events")
+
+        // A real turn still says finished.
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", agentChunk("a real answer", "msg-2"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        withTimeout(5_000) { while (events.none { it is AgentEvent.TurnFinished }) delay(10) }
+    }
+
+    @Test
     fun aRealStopStillSaysStopped() = runBlocking {
         val c = controller { holdPrompts = true }
         c.connect(plasmaProfile)

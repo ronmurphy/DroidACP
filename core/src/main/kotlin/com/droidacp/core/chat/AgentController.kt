@@ -521,6 +521,10 @@ class AgentController(
         @Volatile
         var ownTurn: String? = null
 
+        /** The first item key of the remote turn running, to tell whether it showed anything but notes. */
+        @Volatile
+        private var remoteTurnFrom = 0L
+
         /** Following the computer's chat failed this many times in a row; we stop trying after a few. */
         private var followFailures = 0
 
@@ -836,6 +840,7 @@ class AgentController(
             if (turn.started) {
                 // Our own prompt: sendPrompt already shows it as running.
                 if (ownTurn == turn.sessionId) return
+                remoteTurnFrom = s.nextKey
                 _state.update { it.copy(busy = true, remoteTurn = true, cancelling = false) }
                 return
             }
@@ -857,6 +862,8 @@ class AgentController(
                 Transcript.describeStopReason(reason)?.let { Transcript.addNote(ended, it) } ?: ended
             }
             val after = _state.value
+            // A turn that only showed a note (PlasmaLLM's Remote Control switch) isn't worth a "finished".
+            if (after.items.none { it.key >= remoteTurnFrom && it !is ChatItem.Note }) return
             _events.tryEmit(AgentEvent.TurnFinished(after.agentName, reason, after.lastAgentText, turn.sessionId))
         }
 

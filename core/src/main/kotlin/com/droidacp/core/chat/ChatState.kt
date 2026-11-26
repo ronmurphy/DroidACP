@@ -50,7 +50,13 @@ sealed interface ChatItem {
     data class Tool(override val key: Long, val call: ToolCall) : ChatItem
 
     /** Something the app wants to tell the user: errors, stop reasons, notices. */
-    data class Note(override val key: Long, val text: String, val severity: Severity = Severity.Info) : ChatItem
+    /** [messageId]: set for an agent message shown as a note (PlasmaLLM's Remote Control answer), so its chunks join. */
+    data class Note(
+        override val key: Long,
+        val text: String,
+        val severity: Severity = Severity.Info,
+        val messageId: String? = null,
+    ) : ChatItem
 
     enum class Severity { Info, Warning, Error }
 }

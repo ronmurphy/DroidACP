@@ -190,6 +190,21 @@ in a loaded chat's history. `ChatItem.User.remote` keeps it (one marked chunk
 marks the message), and `UserBubble` shows it as PlasmaLLM does: a "You – remote
 message" header and Claude's orange (#d97757) edge, with a faint orange fill.
 
+PlasmaLLM 7 gives the agent's answer to `/remote-control` (sent by its Remote
+Control switch) the messageId `plasmallm-remote-control-<uuid>`, new for each
+command. `Transcript` shows chunks with that prefix as one note
+(`PlasmaLlm.REMOTE_CONTROL_MESSAGE`), as PlasmaLLM does, and a remote turn that
+showed only notes posts no "finished" notification.
+
+Tool cards (`ToolCallCard.kt`): `ToolSize.detailLines` counts what an open card
+would show, a long line counting as one per 100 characters. Over 20 lines, the
+card stays closed, its header says "N lines" (or "+A −R" for edits, from
+`ToolSize.diffStat`), and a tap opens `ToolDetailsSheet` full screen, which
+follows the call live and can wrap or scroll sideways. Lines over 2,000
+characters are cut (`ToolSize.clipLine`) in cards, the sheet and code blocks,
+since one line of minified code is no use sideways and costly to lay out; the
+permission dialog passes `whole = true` and shows them in full.
+
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission
 questions are answered `cancelled`, its later `session/update`s, permission
@@ -334,7 +349,7 @@ PlasmaLLM-style side panel on tablets.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~95 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~100 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
                                 # cloud), SDK adapters against a local fake server,
                                 # the PlasmaLLM companion against a fake PlasmaLLM,

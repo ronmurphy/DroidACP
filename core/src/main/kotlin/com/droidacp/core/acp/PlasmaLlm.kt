@@ -109,6 +109,13 @@ object PlasmaLlm {
      */
     fun stillRunning(promptMeta: JsonObject?): Boolean = promptMeta?.obj("plasmallm")?.bool("stillRunning") == true
 
+    /**
+     * The messageId PlasmaLLM (protocol 7) gives the agent's answer to the `/remote-control`
+     * command ("Remote Control is active…", "…is off."), new for each command. Shown as a
+     * note, as PlasmaLLM shows it, not as a reply.
+     */
+    const val REMOTE_CONTROL_MESSAGE = "plasmallm-remote-control-"
+
     /** The `_meta` of a load retried after [Reason.OPEN_ELSEWHERE]: what to do about the other Claude. */
     fun openElsewhereMeta(choice: String): JsonObject = buildJsonObject {
         putJsonObject("plasmallm") { put("openElsewhere", choice) }

@@ -78,9 +78,9 @@ fun PermissionDialog(permission: PendingPermission, call: ToolCall?, onAnswer: (
                         }
                         val input = call.rawInput
                         // Wrapped, not scrolled sideways: you should see the whole change before allowing it.
-                        if (input != null && diffs.isEmpty()) MonoBox(input, label = "Input", wrap = true)
+                        if (input != null && diffs.isEmpty()) MonoBox(input, label = "Input", wrap = true, whole = true)
                         for (content in call.content) {
-                            if (content is ToolContent.Diff) DiffView(content, wrap = true, showPath = false) else ToolContentView(content, wrap = true)
+                            if (content is ToolContent.Diff) DiffView(content, wrap = true, showPath = false, whole = true) else ToolContentView(content, wrap = true, whole = true)
                         }
                     }
                 }

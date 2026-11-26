@@ -189,6 +189,10 @@ computers without PlasmaLLM.
 - Streams the agent's replies, rendered as Markdown (code blocks with Copy, tables, lists)
 - Shows **tool calls** (reads, searches, commands) with their status, input and output
 - Shows **file edits as diffs**
+- **Long tool cards start closed** (over about 20 lines): the header says how long ("120 lines", or
+  "+12 −3" for an edit), and a tap opens them full screen, with lines wrapped or scrolling sideways.
+  Lines over 2,000 characters (minified code, say) are cut in the chat; the permission dialog
+  always shows everything
 - **Permission prompts**: allow once, always allow, or reject, as offered by the agent
 - **Plans**: the agent's to-do list, as a collapsible bar
 - **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles)

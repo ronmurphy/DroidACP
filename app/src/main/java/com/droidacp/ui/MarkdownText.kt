@@ -39,6 +39,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.droidacp.core.chat.ToolSize
 import com.droidacp.core.markdown.Markdown
 
 /** Renders agent markdown as Compose UI. Parsing lives in `core` (Markdown.kt). */
@@ -139,7 +140,7 @@ fun CodeBlock(code: String, language: String?, modifier: Modifier = Modifier) {
                 }
             }
             Text(
-                text = code,
+                text = remember(code) { ToolSize.clipLongLines(code) },
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
