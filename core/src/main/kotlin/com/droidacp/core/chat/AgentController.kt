@@ -12,6 +12,7 @@ import com.droidacp.core.acp.PermissionRequest
 import com.droidacp.core.acp.PlasmaChat
 import com.droidacp.core.acp.PlasmaEvent
 import com.droidacp.core.acp.PlasmaLlm
+import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.SessionSetup
 import com.droidacp.core.acp.SessionUpdate
 import com.droidacp.core.acp.Transport
@@ -1267,7 +1268,7 @@ class AgentController(
         override fun onExtNotification(method: String, params: JsonObject) {
             if (!isCurrent || !plasma) return
             when (val event = PlasmaEvent.parse(method, params)) {
-                is PlasmaEvent.State -> onHostState(event.chat, event.tabletTools)
+                is PlasmaEvent.State -> onHostState(event.chat, event.tabletTools, event.tabs)
                 is PlasmaEvent.Turn -> onHostTurn(event)
                 is PlasmaEvent.PermissionResolved -> {
                     // Answered on the computer or another device (or dropped): close ours. Our
@@ -1293,13 +1294,17 @@ class AgentController(
             return r.call(params)
         }
 
-        private fun onHostState(chat: PlasmaChat, tabletTools: Boolean?) {
+        private fun onHostState(chat: PlasmaChat, tabletTools: Boolean?, tabs: List<PlasmaTab>?) {
             // An empty id means PlasmaLLM is switching chats; the next state names the new one.
             if (chat.sessionId.isEmpty()) return
             host = chat
             _state.update { s ->
                 s.copy(
-                    plasmaLlm = s.plasmaLlm?.copy(chat = chat, tabletTools = tabletTools ?: s.plasmaLlm.tabletTools),
+                    plasmaLlm = s.plasmaLlm?.copy(
+                        chat = chat,
+                        tabletTools = tabletTools ?: s.plasmaLlm.tabletTools,
+                        tabs = tabs ?: s.plasmaLlm.tabs,
+                    ),
                     sessionTitle = if (s.sessionId == chat.sessionId && chat.title != null) chat.title else s.sessionTitle,
                 )
             }

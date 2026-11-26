@@ -175,6 +175,18 @@ moving adds that the chat left is still working in its tab. Without the flag,
 Chats panel that's in a back tab brings that tab to the front, so the
 "Stop the agent's work?" question says so when PlasmaLLM speaks protocol 4.
 
+PlasmaLLM 8 lists every tab's chat in `_plasmallm/state`'s `tabs`
+(`PlasmaTab` in `PlasmaLlm.kt`: `sessionId`, `cwd`, `title`, `busy`, `front`),
+kept in `PlasmaHello.tabs`. `ChatState.switchStopsWork(sessionId)` is the rule
+from "A chat another tab has" in PlasmaLLM's protocol doc: a chat a tab has
+only brings that tab to the front and stops nothing; any other chat, or a new
+one (null), replaces the front tab's chat, so it asks only then, while this
+chat or the front tab is busy. Without `tabs` (another agent, or PlasmaLLM
+before 8) every switch mid-turn asks, as before. The Chats panel lists
+`ChatState.otherTabs` first ("In PlasmaLLM's other tabs", a spinner on the
+working ones), and marks those chats in the folder list and bookmarks
+(`tabWith`).
+
 PlasmaLLM 5 passes on turns from outside it, for a chat with Remote Control
 on: a message typed in the Claude app, or a turn Claude starts by itself. They
 come as any turn sent from elsewhere (`started`, maybe no prompt chunk, the
