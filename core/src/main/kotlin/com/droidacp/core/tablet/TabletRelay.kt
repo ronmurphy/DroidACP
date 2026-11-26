@@ -202,7 +202,7 @@ class TabletRelay(
          * available right now: " and this.
          */
         const val HELD = "the person at the tablet put it on hold in DroidACP (🛑). Nothing on it can be " +
-            "read or used until they lift the hold there, on the tablet; asking again or another way " +
-            "won't lift it. Tell the user it's on hold."
+            "read or used until they tap “Let it go on” in DroidACP on the tablet; asking again, another way, " +
+            "or Continue on TabDesk's notification won't lift it. Tell the user it's on hold, and where it's lifted."
     }
 }
