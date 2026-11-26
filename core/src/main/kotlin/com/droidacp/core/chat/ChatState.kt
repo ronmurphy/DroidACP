@@ -123,6 +123,8 @@ data class ChatState(
     /** The running turn was started somewhere else (PlasmaLLM's window or another device), not by us. */
     val remoteTurn: Boolean = false,
     val cancelling: Boolean = false,
+    /** 🛑 was pressed: the turn is stopping, and a 🛑 message goes as soon as it has ended. */
+    val halting: Boolean = false,
     val replaying: Boolean = false,
     val modes: List<SessionMode> = emptyList(),
     val currentModeId: String? = null,
@@ -159,6 +161,12 @@ data class ChatState(
     /** [approvalElsewhere] as shown: only during a turn, so one left over never shows after it. */
     val waitingElsewhere: Set<String> get() = if (busy) approvalElsewhere else emptySet()
     val canChat: Boolean get() = isConnected && sessionId != null && !startingSession
+
+    /**
+     * 🛑 is offered in the message box (plan D22): while the agent is working in a PlasmaLLM
+     * chat whose agent may use a tablet, on any device, with TabDesk or without.
+     */
+    val canHalt: Boolean get() = busy && !halting && canChat && plasmaLlm != null && plasmaLlm.tabletTools != false
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
     val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"
 

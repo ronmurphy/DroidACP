@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -451,6 +452,43 @@ class AgentController(
         if (!t.held.value) return
         t.setHeld(false)
         link?.tabletReleased()
+    }
+
+    /**
+     * 🛑 in the message box, while the agent is working (plan D22): stop the turn, and put the
+     * tablet on hold, from any device. PlasmaLLM takes no message during a turn, so the turn is
+     * stopped first and a 🛑 message goes as soon as it has ended; the DroidACP that offers the
+     * tablet holds on it (D21), and the agent reads why it was stopped. On that device the hold
+     * is set here at once as well, before anything else happens.
+     */
+    fun halt() {
+        val l = link ?: return
+        val s = _state.value
+        if (!s.canHalt) return
+        // Before the turn is cancelled, so its running calls end refused, as on hold.
+        l.holdIfAsked(HALT_MESSAGE)
+        _state.update { Transcript.addNote(it, "🛑 Stopping the agent, then sending 🛑 to put the tablet on hold.").copy(halting = true) }
+        cancelTurn()
+        l.scope.launch {
+            var sent = false
+            try {
+                // The turn's end, and that of any other started meanwhile (from the computer).
+                while (!sent) {
+                    _state.first { !it.busy && it.canChat }
+                    if (l !== link) return@launch
+                    sent = sendPrompt(HALT_MESSAGE)
+                }
+            } finally {
+                _state.update {
+                    val done = it.copy(halting = false)
+                    if (sent) {
+                        done
+                    } else {
+                        Transcript.addNote(done, "The 🛑 wasn't sent: the connection closed first. Send 🛑 when you're connected again.", ChatItem.Severity.Warning)
+                    }
+                }
+            }
+        }
     }
 
     /** Wait, then connect again to the same agent and chat: the tablet should stay reachable. */
@@ -1315,6 +1353,9 @@ class AgentController(
 
         /** Give up following PlasmaLLM's chat after this many failed opens in a row (reconnecting resets it). */
         private const val MAX_FOLLOW_FAILURES = 3
+
+        /** What 🛑 in the message box sends once the turn has stopped: a hold, by D21's rule. */
+        const val HALT_MESSAGE = "🛑"
 
         /** The waits before connecting again by itself, growing; the last one repeats. */
         val RECONNECT_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L, 30_000L, 60_000L, 120_000L, 300_000L)

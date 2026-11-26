@@ -30,6 +30,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.util.concurrent.ConcurrentHashMap
@@ -637,6 +639,87 @@ class TabletRelayTest {
         delay(100)
         assertTrue(savedHolds.isEmpty())
         assertEquals(0, tabdesk.stops.get())
+    }
+
+    // --- 🛑 in the message box while the agent works (D22) ---
+
+    /** The text of each message sent to PlasmaLLM, in order. */
+    private fun promptTexts() = host.requests.filter { it.first == "session/prompt" }.map { (_, params) ->
+        params["prompt"]!!.jsonArray.joinToString("") { it.jsonObject.str("text").orEmpty() }
+    }
+
+    @Test
+    fun haltOnTheTabletHoldsAtOnceStopsTheTurnThenSendsAStopMessage() = runBlocking {
+        val c = controller { protocol = 7; holdPrompts = true }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        assertFalse(c.state.value.canHalt, "not while idle")
+        assertTrue(c.sendPrompt("look at the kittens"))
+        host.waitForRequests("session/prompt", 1)
+        c.waitFor("🛑 offered") { it.canHalt }
+        val resumes = tabdesk.resumes.get() // the first message lets TabDesk go on
+
+        c.halt()
+        assertEquals(listOf(true), savedHolds, "held here at once")
+        waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" } }
+        c.waitFor("stopping, 🛑 not offered twice") { it.halting && !it.canHalt && it.tablet?.held == true }
+        val refused = withTimeout(5_000) { host.mcpMessage(41, screenCall()).await() }
+        assertEquals(-33001L, refused.errorCode(), "the turn's calls are refused meanwhile")
+
+        host.answerPrompt(buildJsonObject { put("stopReason", "cancelled") })
+        host.waitForRequests("session/prompt", 2)
+        assertEquals(listOf("look at the kittens", "🛑"), promptTexts())
+        c.waitFor("done") { !it.halting }
+        assertEquals(listOf(true), savedHolds, "the 🛑 message finds it held already")
+        assertEquals(resumes, tabdesk.resumes.get(), "and doesn't let it go on")
+    }
+
+    @Test
+    fun haltOnAPhoneWithoutTheTabletStopsTheTurnThenSendsAStopMessage() = runBlocking {
+        val c = controller(tablet = false) { protocol = 7; holdPrompts = true }
+        c.connect(profile.copy(useTablet = false))
+        c.joined("chat-a")
+        assertTrue(c.sendPrompt("look at the kittens"))
+        host.waitForRequests("session/prompt", 1)
+        c.waitFor("🛑 offered without TabDesk") { it.canHalt }
+
+        c.halt()
+        waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" } }
+        delay(100)
+        assertEquals(1, promptTexts().size, "nothing more while the turn is running")
+        host.answerPrompt(buildJsonObject { put("stopReason", "cancelled") })
+        host.waitForRequests("session/prompt", 2)
+        assertEquals("🛑", promptTexts().last(), "the tablet holds on this (D21)")
+        assertTrue(savedHolds.isEmpty())
+    }
+
+    @Test
+    fun haltDuringATurnStartedOnTheComputerSendsTheStopMessageWhenItEnds() = runBlocking {
+        val c = controller(tablet = false)
+        c.connect(profile.copy(useTablet = false))
+        c.joined("chat-a")
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        c.waitFor("the laptop's turn") { it.canHalt }
+
+        c.halt()
+        waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" && it.second.str("sessionId") == "chat-a" } }
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "ended"); put("stopReason", "cancelled") })
+        host.waitForRequests("session/prompt", 1)
+        assertEquals(listOf("🛑"), promptTexts())
+    }
+
+    @Test
+    fun haltIsntOfferedWhenTheComputerDoesntLetTheAgentUseATablet() = runBlocking {
+        val c = controller(tablet = false) { protocol = 7; holdPrompts = true; tabletTools = false }
+        c.connect(profile.copy(useTablet = false))
+        c.joined("chat-a")
+        assertTrue(c.sendPrompt("refactor the parser"))
+        c.waitFor("busy") { it.busy }
+        assertFalse(c.state.value.canHalt)
+        c.halt()
+        delay(100)
+        assertTrue(host.requests.none { it.first == "session/cancel" }, "nothing happens")
     }
 
     // --- approval on another device (D8) ---

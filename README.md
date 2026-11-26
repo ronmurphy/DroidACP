@@ -214,6 +214,11 @@ starts, so the tablet works in chats started after both are on.
   sees the message in the chat and holds itself; the phone needs no TabDesk. A message
   can't lift a hold (the agent can have messages sent for it), so that stays a tap on
   the tablet.
+- **🛑 in the message box**, beside stop while the agent is working in a PlasmaLLM chat,
+  on every device, the phone too: it stops the agent's reply, then sends a 🛑, which puts
+  the tablet on hold as above. PlasmaLLM takes no message while the agent works, so the
+  reply is stopped first. On the tablet itself the hold is set at once as well. The stop
+  square beside it only stops the reply.
 - **Quiet on this device**: no "finished", permission or problem notifications from
   this agent on the tablet, when your phone already has them.
 - A permission the agent asks for while it's using the tablet is answered on your
@@ -236,7 +241,14 @@ TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
   always shows everything. Commands show as the agent wrote them, with real line breaks, not as JSON
 - **Permission prompts**: allow once, always allow, or reject, as offered by the agent
 - **Plans**: the agent's to-do list, as a collapsible bar
-- **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles)
+- **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles),
+  under the gear at the top of the chat
+- **The message box**: one rounded box with **+** (attach a picture), the text, and send, which
+  becomes a stop square while the agent works. Under it, a thin **context bar** fills as the chat
+  uses the agent's context, fading through amber to red as it nears full (and compaction); it
+  drops back after a compaction, and a tap shows the numbers
+- **Pictures** in the chat (screenshots, the tablet's camera) open full screen with a tap:
+  pinch or double-tap to zoom, drag to look around
 - **Slash commands**: type `/` to see what the agent offers
 - **Images**: attach photos or screenshots when the agent supports them
 - **Managing saved agents**: each agent's ⋮ menu has *Edit*, *Copy and edit* (a new agent with the same settings, e.g. to point it at another folder; the original stays as it is) and *Delete* (asks first; only the saved settings go, not files or conversations)
