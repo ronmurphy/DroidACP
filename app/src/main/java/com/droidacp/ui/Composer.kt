@@ -134,7 +134,13 @@ fun Composer(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                TabletBar(state, onStop = actions::stopTablet, onOpenTabDesk = actions::openTabDesk)
+                TabletBar(
+                    state,
+                    onStop = actions::stopTablet,
+                    onHold = actions::holdTablet,
+                    onRelease = actions::releaseTablet,
+                    onOpenTabDesk = actions::openTabDesk,
+                )
                 if (suggestions.isNotEmpty()) {
                     Column(Modifier.padding(bottom = 6.dp)) {
                         for (command in suggestions) {

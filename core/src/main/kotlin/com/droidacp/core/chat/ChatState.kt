@@ -86,6 +86,8 @@ data class TabletUse(
     val declared: Boolean = false,
     /** The agent's calls running on the tablet now. */
     val calls: Int = 0,
+    /** 🛑 On hold until the user lets it go on here (plan D20); every call is refused. */
+    val held: Boolean = false,
 ) {
     /** The agent is using the tablet: the bar says so, with Stop. */
     val inUse: Boolean get() = status.control == TabletStatus.ACTIVE || calls > 0

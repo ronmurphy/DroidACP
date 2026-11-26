@@ -108,6 +108,12 @@ interface ChatActions {
     /** The tablet bar's Stop: the turn, and the agent's use of this tablet until the next message. */
     fun stopTablet()
 
+    /** 🛑 Hold: Stop, and the agent stays off this tablet until [releaseTablet]. */
+    fun holdTablet()
+
+    /** Let the agent use this tablet again after a hold (asked to confirm first). */
+    fun releaseTablet()
+
     /** TabDesk → Customize → Agent, where DroidACP is approved. */
     fun openTabDesk()
 }
@@ -122,6 +128,7 @@ fun ChatScreen(
     chats: ChatsPanel = ChatsPanel(),
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmRelease by remember { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var chatsOpen by rememberSaveable { mutableStateOf(false) }
     fun openChats() {
@@ -178,6 +185,17 @@ fun ChatScreen(
                             if (state.isConnected) {
                                 DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; switchChat { actions.newChat(null) } })
                                 DropdownMenuItem(text = { Text("Chats and bookmarks") }, onClick = { menuOpen = false; openChats() })
+                                // 🛑 at any time, not only while the bar shows (plan D20).
+                                state.tablet?.let { tablet ->
+                                    if (tablet.held) {
+                                        DropdownMenuItem(text = { Text("Let the agent use this tablet again…") }, onClick = { menuOpen = false; confirmRelease = true })
+                                    } else {
+                                        DropdownMenuItem(
+                                            text = { Text("🛑 Hold: keep the agent off this tablet", color = MaterialTheme.colorScheme.error) },
+                                            onClick = { menuOpen = false; actions.holdTablet() },
+                                        )
+                                    }
+                                }
                                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menuOpen = false; actions.disconnect() })
                             } else if (state.status !is ConnectionStatus.Connecting) {
                                 DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menuOpen = false; actions.reconnect() })
@@ -255,6 +273,15 @@ fun ChatScreen(
         OpenElsewhereDialog(elsewhere, onAnswer = { choice ->
             if (choice == null) actions.answerOpenElsewhere(null) else switchChat { actions.answerOpenElsewhere(choice) }
         })
+    }
+    if (confirmRelease) {
+        ReleaseTabletDialog(
+            onRelease = {
+                confirmRelease = false
+                actions.releaseTablet()
+            },
+            onDismiss = { confirmRelease = false },
+        )
     }
     pendingSwitch?.let { go ->
         AlertDialog(

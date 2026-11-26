@@ -30,7 +30,8 @@ import java.util.concurrent.ConcurrentHashMap
  * It reads only the envelope (the MCP request's method and id, the answer's result or
  * error), never what's inside. TabDesk's own refusals ("not approved", "switched off")
  * are MCP results, passed back unchanged; the relay refuses (-33001) only when TabDesk
- * can't be reached, when the user turned the relay off, and for another serverId.
+ * can't be reached, when the user turned the relay off or put the tablet on hold ([held]),
+ * and for another serverId.
  *
  * [connection] names this connection in TabDesk's Binder ids (`c3:mcp-request:7`), so
  * TabDesk's log names a call as PlasmaLLM's does, and a reconnect can't reuse an id
@@ -41,6 +42,8 @@ class TabletRelay(
     val serverId: String,
     private val connection: String,
     allowed: Boolean,
+    /** 🛑 The user put this tablet on hold ([Tablet.held]): every call is refused. */
+    private val held: () -> Boolean = { false },
 ) {
     /** "Let the agent use this tablet (through TabDesk)" is on for this agent. */
     @Volatile
@@ -93,6 +96,11 @@ class TabletRelay(
         if (!on) running.values.forEach { it.cancel() }
     }
 
+    /** The tablet was just put on hold: the running calls end refused, as later ones will. */
+    fun hold() {
+        running.values.forEach { it.cancel() }
+    }
+
     /**
      * One `mcp/message` request from PlasmaLLM: [params] holds `serverId`, `requestId`, MCP's
      * `method` and `params`, `sessionId` and `toolCallId`. Returns `{result}` or `{error}`,
@@ -100,6 +108,7 @@ class TabletRelay(
      */
     suspend fun call(params: JsonObject): JsonObject {
         if (!allowed) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "it's turned off in DroidACP on the tablet")
+        if (held()) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, HELD)
         if (params.str("serverId") != serverId) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "this device offers no tablet under that serverId")
         val requestId = params.str("requestId")
         val method = params.str("method")
@@ -125,13 +134,20 @@ class TabletRelay(
                 sent.cancel()
                 throw RpcException(RpcErrorCodes.INVALID_PARAMS, "requestId $requestId is already running")
             }
+            // Put on hold since the check above: hold() may have missed this call, as it wasn't listed yet.
+            if (held()) {
+                untrack(requestId, sent)
+                sent.cancel()
+                throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, HELD)
+            }
             try {
                 sent.start()
                 sent.await()
             } catch (e: CancellationException) {
-                // The call was cancelled from here (setAllowed(false)), not this request.
-                if (!allowed && sent.isCancelled && currentCoroutineContext().isActive) {
-                    throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "it was turned off in DroidACP on the tablet")
+                // The call was cancelled from here (setAllowed(false), hold()), not this request.
+                if (sent.isCancelled && currentCoroutineContext().isActive) {
+                    if (!allowed) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "it was turned off in DroidACP on the tablet")
+                    if (held()) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, HELD)
                 }
                 throw e
             } finally {
@@ -180,5 +196,13 @@ class TabletRelay(
 
         /** The name declared when TabDesk hasn't said the tablet's own. */
         const val DEFAULT_NAME = "Tablet"
+
+        /**
+         * Why a call is refused while on hold. PlasmaLLM tells the agent "The tablet isn't
+         * available right now: " and this.
+         */
+        const val HELD = "the person at the tablet put it on hold in DroidACP (🛑). Nothing on it can be " +
+            "read or used until they lift the hold there, on the tablet; asking again or another way " +
+            "won't lift it. Tell the user it's on hold."
     }
 }

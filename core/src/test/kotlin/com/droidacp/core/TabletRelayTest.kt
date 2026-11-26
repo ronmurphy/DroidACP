@@ -38,6 +38,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -53,6 +54,9 @@ class TabletRelayTest {
     private val host: FakePlasmaLlm get() = hosts.last()
     private val tabdesk = FakeTabDesk()
 
+    /** Each hold saved (D20), in order. */
+    private val savedHolds = CopyOnWriteArrayList<Boolean>()
+
     @AfterTest
     fun cleanUp() {
         scope.cancel()
@@ -64,9 +68,15 @@ class TabletRelayTest {
     /** Reconnecting by itself waits a minute unless a test says otherwise. */
     private fun controller(
         tablet: Boolean = true,
+        held: Boolean = false,
         reconnect: List<Long> = listOf(60_000L),
         configure: FakePlasmaLlm.() -> Unit = { protocol = 7 },
-    ) = AgentController(scope, "test", tablet = Tablet(tabdesk, SERVER_ID).takeIf { tablet }, reconnectDelaysMs = reconnect) { _, listener ->
+    ) = AgentController(
+        scope,
+        "test",
+        tablet = Tablet(tabdesk, SERVER_ID, held) { savedHolds += it }.takeIf { tablet },
+        reconnectDelaysMs = reconnect,
+    ) { _, listener ->
         FakePlasmaLlm(listener).apply(configure).also { hosts += it }
     }
 
@@ -448,6 +458,88 @@ class TabletRelayTest {
         tabdesk.stop()
         delay(100)
         assertEquals(1, host.requests.count { it.first == "session/cancel" })
+    }
+
+    // --- 🛑 hold, until the user lets it go on (D20) ---
+
+    @Test
+    fun aHoldStopsTheTurnAndRefusesEveryCallUntilTheUserLetsItGoOn() = runBlocking {
+        val c = controller { protocol = 7; holdPrompts = true }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        assertTrue(c.sendPrompt("use the tablet"))
+        c.waitFor("busy") { it.busy }
+        host.waitForRequests("session/prompt", 1)
+        val running = host.mcpMessage(41, screenCall())
+        val (id, _) = tabdesk.nextSent()
+
+        c.holdTablet()
+        assertEquals(listOf(true), savedHolds, "saved at once")
+        val refused = withTimeout(5_000) { running.await() }
+        assertEquals(-33001L, refused.errorCode(), "the running call ends refused")
+        assertTrue("on hold" in refused.obj("error")?.str("message").orEmpty(), "and the agent is told why")
+        waitUntil("TabDesk's cancel") { id in tabdesk.cancelled }
+        waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" } }
+        assertEquals(1, tabdesk.stops.get(), "TabDesk stops too")
+        c.waitFor("the bar says on hold") { it.tablet?.held == true }
+
+        host.answerPrompt(buildJsonObject { put("stopReason", "cancelled") })
+        c.waitFor("idle") { !it.busy }
+        val resumes = tabdesk.resumes.get()
+        // Unlike Stop, the user's next message doesn't lift it, here or from elsewhere.
+        assertTrue(c.sendPrompt("go on"))
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        delay(100)
+        assertEquals(resumes, tabdesk.resumes.get(), "no resume")
+        val later = withTimeout(5_000) { host.mcpMessage(42, screenCall("mcp-request:8")).await() }
+        assertEquals(-33001L, later.errorCode())
+        assertEquals(listOf(id), tabdesk.sentIds, "nothing more reached TabDesk")
+
+        c.releaseTablet()
+        assertEquals(listOf(true, false), savedHolds)
+        assertEquals(resumes + 1, tabdesk.resumes.get(), "TabDesk lets it go on")
+        c.waitFor("the bar lets go") { it.tablet?.held == false }
+        val after = host.mcpMessage(43, screenCall("mcp-request:9"))
+        val (third, _) = tabdesk.nextSent()
+        tabdesk.answer(third, """{"jsonrpc":"2.0","id":"mcp-request:9","result":{"content":[]}}""")
+        assertNotNull(withTimeout(5_000) { after.await() }.obj("result"), "calls reach TabDesk again")
+        Unit
+    }
+
+    @Test
+    fun aHoldSavedBeforeARestartStillHoldsAndTheTabletStaysDeclared() = runBlocking {
+        val c = controller(held = true)
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared() // so lifting the hold works in the same chat
+        c.waitFor("the bar says on hold") { it.tablet?.held == true }
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        delay(100)
+        assertEquals(0, tabdesk.resumes.get())
+        val answer = withTimeout(5_000) { host.mcpMessage(41, screenCall()).await() }
+        assertEquals(-33001L, answer.errorCode())
+        assertTrue(tabdesk.sentIds.isEmpty())
+        assertTrue(savedHolds.isEmpty(), "nothing changed")
+    }
+
+    @Test
+    fun aHoldWhileIdleStopsTabDeskButCancelsNoTurn() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        c.holdTablet()
+        assertEquals(1, tabdesk.stops.get())
+        c.waitFor("the bar says on hold") { it.tablet?.held == true }
+        delay(100)
+        assertTrue(host.requests.none { it.first == "session/cancel" })
+
+        // Lifting a hold that isn't there does nothing.
+        c.releaseTablet()
+        c.releaseTablet()
+        assertEquals(listOf(true, false), savedHolds)
+        assertEquals(1, tabdesk.resumes.get())
     }
 
     // --- approval on another device (D8) ---
