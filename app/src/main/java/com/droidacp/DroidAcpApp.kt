@@ -65,7 +65,7 @@ class DroidAcpApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        controller = AgentController(appScope, BuildConfig.VERSION_NAME, transportFactory())
+        controller = AgentController(appScope, BuildConfig.VERSION_NAME, transports = transportFactory())
         profiles = ProfileStore(this)
         folders = FolderHistory(this)
         bookmarks = BookmarkStore(this)

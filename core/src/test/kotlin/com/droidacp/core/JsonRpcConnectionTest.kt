@@ -101,6 +101,42 @@ class JsonRpcConnectionTest {
     }
 
     @Test
+    fun aCancelRequestAnswersTheRequest32800AtOnceAndDropsTheLateAnswer() = runBlocking {
+        val sent = CopyOnWriteArrayList<String>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val handlerCancelled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val handlerStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val rpc = JsonRpcConnection(
+            this,
+            { sent += it; true },
+            { _, _ ->
+                handlerStarted.complete(Unit)
+                try {
+                    release.await()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    handlerCancelled.complete(Unit)
+                    throw e
+                }
+                JsonPrimitive("late")
+            },
+            { _, _ -> },
+        )
+        rpc.receive("""{"jsonrpc":"2.0","id":41,"method":"mcp/message","params":{}}""")
+        kotlinx.coroutines.withTimeout(5_000) { handlerStarted.await() }
+        rpc.receive("""{"jsonrpc":"2.0","method":"${'$'}/cancel_request","params":{"requestId":41}}""")
+        kotlinx.coroutines.withTimeout(5_000) { handlerCancelled.await() }
+        val reply = parse(sent.single())
+        assertEquals(41L, reply.long("id"))
+        assertEquals(-32800L, reply.obj("error")?.long("code"))
+
+        // A cancel for a request that isn't running (or a string id that only looks the same) does nothing.
+        rpc.receive("""{"jsonrpc":"2.0","method":"${'$'}/cancel_request","params":{"requestId":"41"}}""")
+        rpc.receive("""{"jsonrpc":"2.0","method":"${'$'}/cancel_request","params":{"requestId":99}}""")
+        delay(50)
+        assertEquals(1, sent.size)
+    }
+
+    @Test
     fun closeFailsPendingRequests() = runBlocking {
         val rpc = JsonRpcConnection(this, { true }, { _, _ -> JsonPrimitive(0) }, { _, _ -> })
         val result = async { runCatching { rpc.request("session/prompt") } }

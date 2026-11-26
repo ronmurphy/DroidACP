@@ -12,7 +12,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -30,6 +29,14 @@ interface AcpClientHandler {
      * Called in arrival order, like [onSessionUpdate]. Ignored unless overridden.
      */
     fun onExtNotification(method: String, params: JsonObject) {}
+
+    /**
+     * PlasmaLLM's `mcp/message`: one MCP message for a server this client declared over ACP
+     * (the tablet). Returns the answer's result; throws [RpcException] to refuse it. Refused
+     * with "method not found" unless overridden.
+     */
+    suspend fun mcpMessage(params: JsonObject): JsonElement =
+        throw RpcException(RpcErrorCodes.METHOD_NOT_FOUND, "DroidACP offers no MCP servers here")
 }
 
 /**
@@ -97,8 +104,9 @@ class AcpClient(
         rpc.request("authenticate", buildJsonObject { put("methodId", methodId) })
     }
 
-    suspend fun newSession(cwd: String): SessionSetup {
-        val result = rpc.request("session/new", sessionParams(cwd)) as? JsonObject
+    /** [mcpServers]: MCP servers offered to the agent for this session (the tablet, to PlasmaLLM). */
+    suspend fun newSession(cwd: String, mcpServers: List<JsonObject> = emptyList()): SessionSetup {
+        val result = rpc.request("session/new", sessionParams(cwd, mcpServers = mcpServers)) as? JsonObject
         val sessionId = result?.str("sessionId") ?: throw RpcException(RpcErrorCodes.INTERNAL_ERROR, "Agent did not return a sessionId")
         return SessionSetup.parse(sessionId, result)
     }
@@ -107,14 +115,14 @@ class AcpClient(
      * Re-open an old session. The agent replays its history as `session/update`s before
      * responding. [meta] goes into the params' `_meta` (e.g. [PlasmaLlm.openElsewhereMeta]).
      */
-    suspend fun loadSession(sessionId: String, cwd: String, meta: JsonObject? = null): SessionSetup {
-        val result = rpc.request("session/load", sessionParams(cwd, sessionId, meta)) as? JsonObject
+    suspend fun loadSession(sessionId: String, cwd: String, meta: JsonObject? = null, mcpServers: List<JsonObject> = emptyList()): SessionSetup {
+        val result = rpc.request("session/load", sessionParams(cwd, sessionId, meta, mcpServers)) as? JsonObject
         return SessionSetup.parse(sessionId, result)
     }
 
     /** Re-attach to an old session without a history replay. */
-    suspend fun resumeSession(sessionId: String, cwd: String, meta: JsonObject? = null): SessionSetup {
-        val result = rpc.request("session/resume", sessionParams(cwd, sessionId, meta)) as? JsonObject
+    suspend fun resumeSession(sessionId: String, cwd: String, meta: JsonObject? = null, mcpServers: List<JsonObject> = emptyList()): SessionSetup {
+        val result = rpc.request("session/resume", sessionParams(cwd, sessionId, meta, mcpServers)) as? JsonObject
         return SessionSetup.parse(sessionId, result)
     }
 
@@ -198,10 +206,10 @@ class AcpClient(
     private fun parseConfigResult(result: JsonElement): List<ConfigOption>? =
         (result as? JsonObject)?.arr("configOptions")?.let { arr -> ConfigOption.parseList(arr.mapNotNull { it as? JsonObject }) }
 
-    private fun sessionParams(cwd: String, sessionId: String? = null, meta: JsonObject? = null) = buildJsonObject {
+    private fun sessionParams(cwd: String, sessionId: String? = null, meta: JsonObject? = null, mcpServers: List<JsonObject> = emptyList()) = buildJsonObject {
         if (sessionId != null) put("sessionId", sessionId)
         put("cwd", cwd)
-        put("mcpServers", buildJsonArray { })
+        put("mcpServers", JsonArray(mcpServers))
         if (meta != null) put("_meta", meta)
     }
 
@@ -223,6 +231,7 @@ class AcpClient(
                     }
                 }
             }
+            PlasmaLlm.MCP_MESSAGE -> handler.mcpMessage(p)
             // We advertise no fs/terminal capabilities, so a well-behaved agent never
             // sends those. Anything else is answered with "method not found".
             else -> throw RpcException(RpcErrorCodes.METHOD_NOT_FOUND, "DroidACP does not support $method")

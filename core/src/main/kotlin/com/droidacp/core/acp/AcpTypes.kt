@@ -36,6 +36,8 @@ data class AgentCapabilities(
     val closeSession: Boolean = false,
     val images: Boolean = false,
     val embeddedContext: Boolean = false,
+    /** It takes MCP servers that the client provides over ACP (`mcpCapabilities.acp`): PlasmaLLM, for a tablet. */
+    val mcpOverAcp: Boolean = false,
 ) {
     companion object {
         fun parse(o: JsonObject?): AgentCapabilities {
@@ -49,6 +51,7 @@ data class AgentCapabilities(
                 closeSession = session?.has("close") ?: false,
                 images = prompt?.bool("image") ?: false,
                 embeddedContext = prompt?.bool("embeddedContext") ?: false,
+                mcpOverAcp = o.obj("mcpCapabilities")?.bool("acp") ?: false,
             )
         }
     }

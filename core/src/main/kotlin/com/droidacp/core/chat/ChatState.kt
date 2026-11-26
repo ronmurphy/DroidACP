@@ -13,6 +13,7 @@ import com.droidacp.core.acp.Plan
 import com.droidacp.core.acp.SessionMode
 import com.droidacp.core.acp.SessionSummary
 import com.droidacp.core.acp.ToolCall
+import com.droidacp.core.tablet.TabletStatus
 
 /** Where we are in the connection lifecycle. */
 sealed interface ConnectionStatus {
@@ -72,6 +73,30 @@ data class PendingPermission(
     val options: List<PermissionOption>,
 )
 
+/**
+ * This tablet, offered to PlasmaLLM's agent ("Let the agent use this tablet" is on): what
+ * the bar above the message box shows, and the settings.
+ */
+data class TabletUse(
+    /** TabDesk, as it last said. */
+    val status: TabletStatus,
+    /** PlasmaLLM takes a tablet (protocol 2 and `mcpCapabilities.acp`); false until connected. */
+    val offered: Boolean = false,
+    /** Offered to PlasmaLLM on this connection. */
+    val declared: Boolean = false,
+    /** The agent's calls running on the tablet now. */
+    val calls: Int = 0,
+) {
+    /** The agent is using the tablet: the bar says so, with Stop. */
+    val inUse: Boolean get() = status.control == TabletStatus.ACTIVE || calls > 0
+
+    /** Stopped (here or on TabDesk) until the next message the user sends. */
+    val stopped: Boolean get() = status.control == TabletStatus.STOPPED
+
+    /** Paused because someone touched the screen (TabDesk's tool list 2). */
+    val paused: Boolean get() = status.control == TabletStatus.PAUSED
+}
+
 data class UsageInfo(val used: Long, val size: Long, val costAmount: Double?, val costCurrency: String?) {
     val fraction: Float get() = if (size > 0) (used.toFloat() / size).coerceIn(0f, 1f) else 0f
 }
@@ -116,6 +141,13 @@ data class ChatState(
     val plasmaLlm: PlasmaHello? = null,
     /** PlasmaLLM didn't open a chat another Claude has open; the user is asked what to do. */
     val openElsewhere: OpenElsewhere? = null,
+    /** This tablet, offered to PlasmaLLM's agent; null unless the agent's setting is on. */
+    val tablet: TabletUse? = null,
+    /**
+     * Tool calls (ids) waiting for approval on another device or the laptop: PlasmaLLM asks
+     * there, not on the tablet the agent is using (`_plasmallm/permission_elsewhere`).
+     */
+    val approvalElsewhere: Set<String> = emptySet(),
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected
