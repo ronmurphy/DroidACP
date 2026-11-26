@@ -355,7 +355,9 @@ reads only their envelope; TabDesk decides what's allowed.
   dying fails the running calls with -33002; Android binds again by itself.
 - **Stop.** Stop on the tablet bar calls TabDesk's `stop()` and cancels the turn; Stop
   on TabDesk's notification arrives as `onControlState("stopped", "tabdesk")` and
-  cancels the turn if the chat on screen is the one using the tablet. Either way
+  cancels the turn of the chat the last tablet call came from: the chat on screen, or,
+  from PlasmaLLM's protocol 13, a back tab's (protocol 12 names the tab that made a
+  call; before 13, PlasmaLLM cancels only the front tab's chat). Either way
   TabDesk refuses calls until `resume()`, which DroidACP calls on the user's next
   message (`_plasmallm/turn` with `by: "user"`, or a prompt sent here), never on a
   turn the app started by itself.

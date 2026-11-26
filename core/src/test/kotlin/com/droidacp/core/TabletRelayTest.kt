@@ -107,7 +107,7 @@ class TabletRelayTest {
     /** The tablet entry each session/new, load and resume carried (null: none). */
     private fun declaredServers() = host.declarations().map { (method, servers) -> method to servers?.singleOrNull() as? JsonObject }
 
-    private fun screenCall(requestId: String = "mcp-request:7", serverId: String = SERVER_ID) = buildJsonObject {
+    private fun screenCall(requestId: String = "mcp-request:7", serverId: String = SERVER_ID, sessionId: String = "chat-a") = buildJsonObject {
         put("serverId", serverId)
         put("requestId", requestId)
         put("method", "tools/call")
@@ -115,7 +115,7 @@ class TabletRelayTest {
             put("name", "screen")
             putJsonObject("arguments") { put("screenshot", "none") }
         }
-        put("sessionId", "chat-a")
+        put("sessionId", sessionId)
         put("toolCallId", "tool-1")
     }
 
@@ -462,6 +462,45 @@ class TabletRelayTest {
         tabdesk.stop()
         delay(100)
         assertEquals(1, host.requests.count { it.first == "session/cancel" })
+    }
+
+    @Test
+    fun stopOnTabDeskCancelsABackTabsTurnFromProtocol13() = runBlocking {
+        assertEquals(listOf("chat-b"), stopWhileABackTabUsesTheTablet(13))
+    }
+
+    @Test
+    fun stopOnTabDeskLeavesABackTabsTurnBeforeProtocol13() = runBlocking {
+        assertEquals(emptyList(), stopWhileABackTabUsesTheTablet(12))
+    }
+
+    /** Stop on TabDesk while tab B, in the back, uses the tablet: the chats `session/cancel` named. */
+    private suspend fun stopWhileABackTabUsesTheTablet(protocol: Int): List<String?> {
+        val c = controller { this.protocol = protocol }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        host.notify(PlasmaLlm.STATE, buildJsonObject {
+            put("sessionId", "chat-a")
+            put("cwd", "/home/me/a")
+            put("busy", false)
+            put("tabs", buildJsonArray {
+                add(buildJsonObject { put("sessionId", "chat-a"); put("cwd", "/home/me/a"); put("busy", false); put("front", true) })
+                add(buildJsonObject { put("sessionId", "chat-b"); put("cwd", "/home/me/b"); put("busy", true); put("front", false) })
+            })
+        })
+        c.waitFor("the tabs") { it.plasmaLlm?.tabs?.size == 2 }
+        // Protocol 12 names the tab that made the call.
+        host.mcpMessage(41, screenCall(sessionId = "chat-b"))
+        tabdesk.nextSent()
+
+        tabdesk.stopOnTablet()
+        if (protocol >= PlasmaLlm.CANCEL_ANY_TAB) {
+            waitUntil("session/cancel for tab B") { host.requests.any { it.first == "session/cancel" } }
+        }
+        delay(200)
+        assertFalse(c.state.value.cancelling, "this chat goes on")
+        return host.requests.filter { it.first == "session/cancel" }.map { it.second.str("sessionId") }
     }
 
     // --- 🛑 hold, until the user lets it go on (D20) ---
