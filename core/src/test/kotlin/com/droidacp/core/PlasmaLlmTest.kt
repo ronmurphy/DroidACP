@@ -6,6 +6,7 @@ import com.droidacp.core.acp.PlasmaChat
 import com.droidacp.core.acp.PlasmaEvent
 import com.droidacp.core.acp.PlasmaHello
 import com.droidacp.core.acp.PlasmaLlm
+import com.droidacp.core.acp.PlasmaPerson
 import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
@@ -451,6 +452,39 @@ class PlasmaLlmTest {
     }
 
     @Test
+    fun readsTheLookEachAgentChose() {
+        val bald = buildJsonObject {
+            put("skin", "dark")
+            put("hair", "bald")
+            put("accessories", buildJsonArray { add(JsonPrimitive("glasses")); add(JsonPrimitive(3)); add(JsonPrimitive("scarf")) })
+            put("letter", "")
+        }
+        val curly = buildJsonObject {
+            put("skin", "light")
+            put("hair", "curly")
+            put("haircolor", "auburn")
+            put("accessories", buildJsonArray { add(JsonPrimitive("scarf")) })
+            put("letter", "D")
+        }
+        val state = PlasmaEvent.parse(
+            PlasmaLlm.STATE,
+            chatState("chat-a", "/p", tabs = listOf(
+                tab("chat-a", "/p", front = true, person = curly),
+                tab("chat-b", "/b", person = bald),
+                tab("chat-c", "/c"),
+            )),
+        ) as PlasmaEvent.State
+        assertEquals(
+            listOf(
+                PlasmaPerson("light", "curly", "auburn", listOf("scarf"), 'D'),
+                PlasmaPerson("dark", "bald", null, listOf("glasses", "scarf"), null),
+                null,
+            ),
+            state.tabs?.map { it.person },
+        )
+    }
+
+    @Test
     fun ourPromptInATabLeftBehindIsntStoppedOrFinished() = runBlocking {
         val c = controller { holdPrompts = true }
         c.connect(plasmaProfile)
@@ -718,12 +752,13 @@ class PlasmaLlmTest {
             if (tabs != null) put("tabs", buildJsonArray { tabs.forEach { add(it) } })
         }
 
-    private fun tab(sessionId: String, cwd: String, title: String? = null, busy: Boolean = false, front: Boolean = false) = buildJsonObject {
+    private fun tab(sessionId: String, cwd: String, title: String? = null, busy: Boolean = false, front: Boolean = false, person: JsonObject? = null) = buildJsonObject {
         put("sessionId", sessionId)
         put("cwd", cwd)
         if (title != null) put("title", title)
         put("busy", busy)
         put("front", front)
+        if (person != null) put("person", person)
     }
 
     private fun turn(sessionId: String, state: String, stopReason: String? = null, stillRunning: Boolean = false) = buildJsonObject {

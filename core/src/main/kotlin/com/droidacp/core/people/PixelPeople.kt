@@ -138,6 +138,20 @@ class PixelPeople private constructor(
         )
     }
 
+    /**
+     * The look an agent chose ([skin], [hair], ... as option ids), over [default]: a part it
+     * didn't choose, or chose with an id this file doesn't have, stays the default's. The
+     * shirt is always the default's (the agent's own).
+     */
+    fun chosen(default: Look, skin: String?, hair: String?, hairColor: String?, accessories: List<String>, letter: Char?): Look =
+        default.copy(
+            skin = skin?.takeIf { it in skins } ?: default.skin,
+            hair = hair?.takeIf { it in hairs } ?: default.hair,
+            hairColor = hairColor?.takeIf { it in hairColors } ?: default.hairColor,
+            accessories = accessories.filter { it in accessoryDefs }.distinct().take(MAX_ACCESSORIES),
+            letter = letter?.uppercaseChar()?.takeIf { it in glyphs },
+        )
+
     private class Grid(val label: String, val x: Int, val y: Int, val rows: MutableList<String> = mutableListOf())
 
     private class Section(val kind: String, val name: String, val args: List<String>) {

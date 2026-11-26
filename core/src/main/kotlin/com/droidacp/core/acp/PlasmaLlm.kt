@@ -7,6 +7,7 @@ import com.droidacp.core.rpc.long
 import com.droidacp.core.rpc.obj
 import com.droidacp.core.rpc.str
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -28,9 +29,10 @@ object PlasmaLlm {
      * The companion protocol version DroidACP speaks: the highest whose additions it
      * understands. From 2, PlasmaLLM lets it offer this tablet's tools (see [TABLET_UNAVAILABLE]);
      * 3 to 7 added only things PlasmaLLM sends every client, which DroidACP handles; 8, the
-     * tabs' chats in `_plasmallm/state` ([PlasmaTab]).
+     * tabs' chats in `_plasmallm/state` ([PlasmaTab]); 9, what each tab's agent is doing; 10,
+     * the look each agent chose for its Pixel Person ([PlasmaPerson]).
      */
-    const val PROTOCOL = 8
+    const val PROTOCOL = 10
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
@@ -253,6 +255,8 @@ data class PlasmaTab(
     val activity: String? = null,
     /** What it's doing in a few words, e.g. the running tool's title (protocol 9); often empty. */
     val detail: String? = null,
+    /** The look its agent chose for its Pixel Person (protocol 10); null until it has. */
+    val person: PlasmaPerson? = null,
 ) {
     companion object {
         /** Null when the state has no `tabs` (PlasmaLLM before protocol 8). */
@@ -269,9 +273,33 @@ data class PlasmaTab(
                     agentTitle = agent?.str("title")?.takeIf { t -> t.isNotBlank() },
                     activity = it.str("activity")?.takeIf { t -> t.isNotBlank() },
                     detail = it.str("detail")?.takeIf { t -> t.isNotBlank() },
+                    person = it.obj("person")?.let(PlasmaPerson::parse),
                 )
             }
         }
+    }
+}
+
+/**
+ * The look an agent chose once for its Pixel Person (`tabs[].person`, protocol 10): option
+ * ids of DroidACP's `sprites.txt`. [hairColor] may be missing (bald), [letter] is null for
+ * none. Ids DroidACP doesn't know are drawn as that part of the default look.
+ */
+data class PlasmaPerson(
+    val skin: String?,
+    val hair: String?,
+    val hairColor: String?,
+    val accessories: List<String>,
+    val letter: Char?,
+) {
+    companion object {
+        fun parse(o: JsonObject): PlasmaPerson = PlasmaPerson(
+            skin = o.str("skin")?.ifBlank { null },
+            hair = o.str("hair")?.ifBlank { null },
+            hairColor = o.str("haircolor")?.ifBlank { null },
+            accessories = o.arr("accessories")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty(),
+            letter = o.str("letter")?.trim()?.singleOrNull(),
+        )
     }
 }
 

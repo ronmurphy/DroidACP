@@ -34,7 +34,8 @@ data class StripPerson(
  * The people to show: one per PlasmaLLM tab with a chat (protocol 8), when there are two or
  * more. The chat on screen's pose comes from DroidACP's own view of it; the others' from
  * PlasmaLLM's `activity` (protocol 9), else working or idle. Until a tab says which agent it
- * runs, it's taken to be the same as this chat's.
+ * runs, it's taken to be the same as this chat's. Its look is the one its agent chose
+ * (protocol 10's `person`), else a default that stays the same for its folder.
  */
 fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<StripPerson> {
     val tabs = plasmaLlm?.tabs?.filter { it.sessionId.isNotEmpty() } ?: return emptyList()
@@ -51,7 +52,9 @@ fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<Strip
             name = name,
             agent = agentName?.let(::agentLabel) ?: tab.agentTitle,
             chatTitle = tab.title,
-            look = people.defaultLook(tab.cwd.ifEmpty { tab.sessionId }, shirt, name.firstOrNull()),
+            look = people.defaultLook(tab.cwd.ifEmpty { tab.sessionId }, shirt, name.firstOrNull()).let { default ->
+                tab.person?.let { p -> people.chosen(default, p.skin, p.hair, p.hairColor, p.accessories, p.letter) } ?: default
+            },
             activity = when {
                 isThis -> activity
                 tab.activity != null -> Activity.known(tab.activity, tab.busy)

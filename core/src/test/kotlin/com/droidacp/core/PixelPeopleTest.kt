@@ -3,6 +3,7 @@ package com.droidacp.core
 import com.droidacp.core.acp.Implementation
 import com.droidacp.core.acp.PlasmaChat
 import com.droidacp.core.acp.PlasmaHello
+import com.droidacp.core.acp.PlasmaPerson
 import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.chat.ChatItem
@@ -119,6 +120,23 @@ class PixelPeopleTest {
         assertEquals("plasmaLLM (Claude): working", strip[1].description)
         assertEquals('T', strip[2].look.letter)
         assertEquals("Read Main.kt", strip[3].detail)
+
+        // A chosen look (protocol 10) replaces the default; unknown ids keep the default's part.
+        val chosen = tabs.map {
+            when (it.sessionId) {
+                "chat-c" -> it.copy(person = PlasmaPerson("medium", "swoop", "teal", listOf("glasses", "headphones"), 'T'))
+                "chat-b" -> it.copy(person = PlasmaPerson("green-ish", "afro", null, listOf("cape", "scarf", "bow", "crown"), null))
+                else -> it
+            }
+        }
+        val looks = state.copy(plasmaLlm = state.plasmaLlm.copy(tabs = chosen)).stripPeople()
+        assertEquals(Look("medium", "swoop", "teal", listOf("glasses", "headphones"), 'T', "claude"), looks[2].look)
+        val b = looks[1].look
+        val bDefault = strip[1].look
+        assertEquals(listOf(bDefault.skin, bDefault.hair, bDefault.hairColor), listOf(b.skin, b.hair, b.hairColor))
+        assertEquals(listOf("scarf", "bow"), b.accessories, "known ones only, at most two")
+        assertEquals(null, b.letter, "no letter chosen")
+        assertEquals("claude", b.shirt)
         assertNotEquals(strip[0].look, strip[1].look)
     }
 }
