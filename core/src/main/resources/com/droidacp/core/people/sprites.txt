@@ -357,11 +357,10 @@ A.
 accessory bowtie
 A C8323C
 a 8E2128
+# Two rows on the collar, so the shirt's letter (from row 15) stays clear.
 grid front 3 10
-kk..kk
-kAkkAk
-kak.ak
-kk..kk
+Aa..aA
+AAkkAA
 
 accessory scarf
 A 2BA6A0
@@ -523,13 +522,13 @@ kTTTTTk
 # Poses, one per thing an agent does.
 
 pose sleep
-head 11 5
+head 11 4
 eyes closed
 use chair 8 7
 use torso-down 9 14
 use legs-sit 9 22
 @head
-letter 14 15
+letter 14 16
 effect zzz 22 0
 
 pose laptop

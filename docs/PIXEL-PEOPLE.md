@@ -56,6 +56,11 @@ is stored with the agent's ID and reused in every pose. Until an agent has chose
 default look that stays the same for its project folder, with the folder's first letter on
 its shirt.
 
+PlasmaLLM keeps the choices: each agent calls its `pixel_person` tool once per project (only
+the user can let it choose again, in PlasmaLLM's settings), and PlasmaLLM sends the look as
+each tab's `person` in `_plasmallm/state` (companion protocol 10). DroidACP draws an id it
+doesn't know as that part of the default look.
+
 | Option | Ids |
 | --- | --- |
 | `skin` | `pale`, `light`, `medium-light`, `medium`, `medium-dark`, `dark` |
