@@ -3,6 +3,7 @@ package com.droidacp.core
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.acp.ToolContent
+import com.droidacp.core.chat.ToolInput
 import com.droidacp.core.chat.ToolSize
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,5 +51,30 @@ class ToolSizeTest {
         val newFile = ToolCall(id = "4", title = "Write b.kt", kind = "edit", content = listOf(ToolContent.Diff("/p/b.kt", null, (1..40).joinToString("\n"))))
         assertTrue(ToolSize.detailLines(newFile) > ToolSize.LONG_LINES)
         assertEquals(ToolSize.DiffStat(added = 40, removed = 0), ToolSize.diffStat(newFile))
+    }
+
+    @Test
+    fun aCommandShowsAsWrittenWithEveryOtherField() {
+        val raw = """
+            {
+              "command": "python3 - <<'EOF'\nprint(\"hi\")\nEOF",
+              "description": "Say hi",
+              "timeout": 600000
+            }
+        """.trimIndent()
+        val c = ToolInput.command(raw)!!
+        assertEquals("python3 - <<'EOF'\nprint(\"hi\")\nEOF", c.command)
+        assertEquals(3, c.command.lines().size)
+        assertEquals("Say hi", c.description)
+        assertEquals(listOf("timeout" to "600000"), c.other)
+
+        // Not a command: shown as it came.
+        assertNull(ToolInput.command("""{"path": "/a"}"""))
+        assertNull(ToolInput.command("not json"))
+        assertNull(ToolInput.commandOf("read", raw))
+
+        // The card counts the lines it shows: the command's 3, its description and the other fields.
+        val call = ToolCall(id = "5", title = "python3", kind = "execute", rawInput = raw)
+        assertEquals(5, ToolSize.detailLines(call))
     }
 }

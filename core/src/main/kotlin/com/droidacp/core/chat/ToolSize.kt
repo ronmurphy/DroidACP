@@ -63,7 +63,15 @@ object ToolSize {
     fun detailLines(call: ToolCall): Int {
         var n = call.locations.size
         val input = call.rawInput
-        if (input != null && (call.content.isEmpty() || call.kind == "execute")) n += lines(input)
+        if (input != null && (call.content.isEmpty() || call.kind == "execute")) {
+            // As the card shows it: a command as written, with its description and other fields.
+            val command = ToolInput.commandOf(call.kind, input)
+            n += if (command == null) {
+                lines(input)
+            } else {
+                lines(command.command) + (if (command.description != null) 1 else 0) + (if (command.other.isNotEmpty()) 1 else 0)
+            }
+        }
         for (content in call.content) {
             n += when (content) {
                 is ToolContent.Block -> when (val b = content.block) {

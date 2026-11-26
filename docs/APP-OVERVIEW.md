@@ -203,7 +203,11 @@ card stays closed, its header says "N lines" (or "+A −R" for edits, from
 follows the call live and can wrap or scroll sideways. Lines over 2,000
 characters are cut (`ToolSize.clipLine`) in cards, the sheet and code blocks,
 since one line of minified code is no use sideways and costly to lay out; the
-permission dialog passes `whole = true` and shows them in full.
+permission dialog passes `whole = true` and shows them in full. A text box
+shows 6,000 characters in the chat and 100,000 full screen. A command's input
+(`kind` "execute") shows as the agent wrote it, not as JSON (`ToolInput`):
+its description, the command with real line breaks, and every other field
+after it, in cards, the full-screen view and the permission dialog.
 
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission

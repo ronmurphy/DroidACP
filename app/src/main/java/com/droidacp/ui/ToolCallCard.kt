@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.acp.ToolContent
+import com.droidacp.core.chat.ToolInput
 import com.droidacp.core.chat.ToolSize
 import com.droidacp.core.chat.displayTitle
 import com.droidacp.core.diff.LineDiff
@@ -129,9 +130,9 @@ fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: B
     if (fullScreen) ToolDetailsSheet(call, onDismiss = { fullScreen = false })
 }
 
-/** What a card shows when open: locations, input, content and output. */
+/** What a card shows when open: locations, input, content and output. [limit]: [MonoBox]'s size cap. */
 @Composable
-private fun ToolDetails(call: ToolCall, wrap: Boolean, modifier: Modifier = Modifier) {
+private fun ToolDetails(call: ToolCall, wrap: Boolean, modifier: Modifier = Modifier, limit: Int = MAX_MONO_CHARS) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier) {
         for (location in call.locations) {
             val line = location.line
@@ -144,11 +145,11 @@ private fun ToolDetails(call: ToolCall, wrap: Boolean, modifier: Modifier = Modi
         }
         val input = call.rawInput
         if (input != null && (call.content.isEmpty() || call.kind == "execute")) {
-            MonoBox(input, label = "Input", wrap = wrap)
+            ToolInputView(input, call.kind, wrap = wrap, limit = limit)
         }
-        for (content in call.content) ToolContentView(content, wrap = wrap)
+        for (content in call.content) ToolContentView(content, wrap = wrap, limit = limit)
         val output = call.rawOutput
-        if (output != null && call.content.isEmpty()) MonoBox(output, label = "Output", wrap = wrap)
+        if (output != null && call.content.isEmpty()) MonoBox(output, label = "Output", wrap = wrap, limit = limit)
         if (call.content.isEmpty() && input == null && output == null) {
             Text("No details yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -189,6 +190,8 @@ private fun ToolDetailsSheet(call: ToolCall, onDismiss: () -> Unit) {
         ToolDetails(
             call,
             wrap = wrap,
+            // Full screen is where long output is read: far more of it than the chat shows.
+            limit = FULL_SCREEN_CHARS,
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
@@ -212,7 +215,7 @@ private fun StatusBadge(status: String) {
  * whole instead of cutting them (the permission dialog, where nothing may be hidden).
  */
 @Composable
-fun ToolContentView(content: ToolContent, wrap: Boolean = false, whole: Boolean = false) {
+fun ToolContentView(content: ToolContent, wrap: Boolean = false, whole: Boolean = false, limit: Int = MAX_MONO_CHARS) {
     when (content) {
         is ToolContent.Block -> when (val block = content.block) {
             is ContentBlock.Text -> {
@@ -220,12 +223,12 @@ fun ToolContentView(content: ToolContent, wrap: Boolean = false, whole: Boolean 
                 if (block.text.contains("```") || block.text.startsWith("#")) {
                     MarkdownText(block.text)
                 } else {
-                    MonoBox(block.text, wrap = wrap, whole = whole)
+                    MonoBox(block.text, wrap = wrap, whole = whole, limit = limit)
                 }
             }
             is ContentBlock.Image -> AgentImage(block)
             is ContentBlock.ResourceLink -> Text("📎 ${block.title ?: block.name}", style = MaterialTheme.typography.bodyMedium)
-            is ContentBlock.Resource -> MonoBox(block.text ?: block.uri, label = fileName(block.uri), wrap = wrap, whole = whole)
+            is ContentBlock.Resource -> MonoBox(block.text ?: block.uri, label = fileName(block.uri), wrap = wrap, whole = whole, limit = limit)
             else -> Text("(unsupported content)", style = MaterialTheme.typography.bodySmall)
         }
         is ToolContent.Diff -> DiffView(content, wrap = wrap, whole = whole)
@@ -235,13 +238,38 @@ fun ToolContentView(content: ToolContent, wrap: Boolean = false, whole: Boolean 
 }
 
 /**
- * Monospace text in a tinted box, scrollable sideways (or wrapped, with [wrap]), with a
- * size cap for huge outputs. Very long lines are cut, unless [whole].
+ * A tool's input. A command shows as the agent wrote it (not as JSON), under its
+ * description, with any other fields after it; anything else as it came.
  */
 @Composable
-fun MonoBox(text: String, label: String? = null, wrap: Boolean = false, whole: Boolean = false) {
-    val shown = remember(text, whole) {
-        val capped = if (text.length > MAX_MONO_CHARS) text.take(MAX_MONO_CHARS) + "\n… (${text.length - MAX_MONO_CHARS} more characters)" else text
+fun ToolInputView(input: String, kind: String, wrap: Boolean = false, whole: Boolean = false, limit: Int = MAX_MONO_CHARS) {
+    val command = remember(input, kind) { ToolInput.commandOf(kind, input) }
+    if (command == null) {
+        MonoBox(input, label = "Input", wrap = wrap, whole = whole, limit = limit)
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        command.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        MonoBox(command.command, label = "Command", wrap = wrap, whole = whole, limit = limit)
+        if (command.other.isNotEmpty()) {
+            Text(
+                command.other.joinToString(" · ") { (name, value) -> "$name: $value" },
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Monospace text in a tinted box, scrollable sideways (or wrapped, with [wrap]), with a
+ * size cap for huge outputs ([limit] characters). Very long lines are cut, unless [whole].
+ */
+@Composable
+fun MonoBox(text: String, label: String? = null, wrap: Boolean = false, whole: Boolean = false, limit: Int = MAX_MONO_CHARS) {
+    val shown = remember(text, whole, limit) {
+        val capped = if (text.length > limit) text.take(limit) + "\n… (${text.length - limit} more characters)" else text
         if (whole) capped else ToolSize.clipLongLines(capped)
     }
     Column {
@@ -329,5 +357,9 @@ private fun DiffLineText(text: String, kind: LineDiff.Kind?, wrap: Boolean) {
     )
 }
 
+/** What a tool's text box shows in the chat; the rest is in the full-screen view. */
 private const val MAX_MONO_CHARS = 6000
+
+/** What it shows full screen. */
+private const val FULL_SCREEN_CHARS = 100_000
 private const val MAX_DIFF_LINES = 400

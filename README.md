@@ -192,7 +192,7 @@ computers without PlasmaLLM.
 - **Long tool cards start closed** (over about 20 lines): the header says how long ("120 lines", or
   "+12 −3" for an edit), and a tap opens them full screen, with lines wrapped or scrolling sideways.
   Lines over 2,000 characters (minified code, say) are cut in the chat; the permission dialog
-  always shows everything
+  always shows everything. Commands show as the agent wrote them, with real line breaks, not as JSON
 - **Permission prompts**: allow once, always allow, or reject, as offered by the agent
 - **Plans**: the agent's to-do list, as a collapsible bar
 - **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles)
