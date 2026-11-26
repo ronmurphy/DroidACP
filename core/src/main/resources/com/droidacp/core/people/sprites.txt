@@ -9,7 +9,8 @@
 # palette's, except the ones a person's look sets:
 #   S s r   skin, its shade and blush (from `option skin`)
 #   H h     hair and its shade (from `option haircolor`)
-#   T t     shirt and its shade (from `shirt`: one colour, or stripes row by row)
+#   T t     shirt and its shade (the chosen `option shirt`, else the agent's colours from
+#           `agent`: one colour, or stripes row by row)
 #   L       the letter on the shirt (white or dark, whichever shows on the shirt)
 #   A a     an accessory's own colours (its `A` and `a` lines)
 #
@@ -23,8 +24,12 @@
 # `eyes open|closed|down` picks the eyes; `head none` draws no person (an empty chair).
 #
 # The options are what an agent picks once, for its own Pixel Person: skin, hair,
-# haircolor, accessories (up to 2) and a letter (A-Z, 0-9 or none). The shirt is the
-# agent's (`shirt <agent>`), so people from different agents stay apart.
+# haircolor, accessories (up to 2), a letter (A-Z, 0-9 or none) and a shirt colour. The
+# agent's own colours (`agent <id>`) are drawn as a bar under the person, so people from
+# different agents stay apart whatever they wear: 22 x 4 pixels, outlined in `k` (in `G`
+# when its colours are as dark as that, so it shows on a dark screen) with its corners left
+# out, the colours side by side in the middle two rows (the lower one shaded 0.8). Until an
+# agent chooses a shirt, it wears its agent's colours.
 
 palette
 k 26222B
@@ -75,18 +80,37 @@ pink E77FB3
 purple 8E5BD6
 red C8323C
 
-# Shirts by agent (the agent's own name in ACP's agentInfo); stripes run row by row.
-shirt claude D97757
-shirt gemini 4285F4 EA4335 FBBC05 34A853
-shirt codex 202123
-shirt copilot 8957E5
-shirt qwen 615CED
-shirt mistral FA520F FFD800
-shirt deepseek 4D6BFE
-shirt opencode 5F6670
-shirt goose F2F2F2
-shirt local 8C919B
-shirt unknown E8E8E8
+option shirt
+red D64545
+orange E8833A
+yellow E8C547
+lime 9BCB3C
+green 3F9A55
+teal 2BA6A0
+cyan 3CB4D8
+blue 3F7BD9
+navy 2F4A7A
+purple 7A4FB0
+pink E77FB3
+maroon 8E2B3A
+brown 7A5236
+grey 8C919B
+black 2E2F33
+white EEEEEE
+
+# Each agent's colours (from the agent's own name in ACP's agentInfo): its bar, and its
+# shirt until it chooses one (stripes run row by row there).
+agent claude D97757
+agent gemini 4285F4 EA4335 FBBC05 34A853
+agent codex 202123
+agent copilot 8957E5
+agent qwen 615CED
+agent mistral FA520F FFD800
+agent deepseek 4D6BFE
+agent opencode 5F6670
+agent goose F2F2F2
+agent local 8C919B
+agent unknown E8E8E8
 
 face
 grid front 0 0

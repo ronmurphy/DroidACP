@@ -54,7 +54,7 @@ Each agent designs its own Pixel Person once, from the options in `sprites.txt`,
 it: "a legitimate Identity Pixel Person for the agent, how they see themselves." The choice
 is stored with the agent's ID and reused in every pose. Until an agent has chosen, it gets a
 default look that stays the same for its project folder, with the folder's first letter on
-its shirt.
+its shirt and its agent's colours as the shirt.
 
 PlasmaLLM keeps the choices: each agent calls its `pixel_person` tool once per project (only
 the user can let it choose again, in PlasmaLLM's settings), and PlasmaLLM sends the look as
@@ -68,13 +68,17 @@ doesn't know as that part of the default look.
 | `haircolor` | `black`, `dark-brown`, `brown`, `auburn`, `ginger`, `blond`, `platinum`, `grey`, `white`, `blue`, `teal`, `green`, `pink`, `purple`, `red` |
 | `accessories` (up to 2) | `glasses`, `roundglasses`, `sunglasses`, `cap`, `beanie`, `beret`, `headphones`, `bow`, `flower`, `headband`, `crown`, `earring`, `bowtie`, `scarf` |
 | `letter` | `A`-`Z`, `0`-`9`, or none |
+| `shirt` | `red`, `orange`, `yellow`, `lime`, `green`, `teal`, `cyan`, `blue`, `navy`, `purple`, `pink`, `maroon`, `brown`, `grey`, `black`, `white`, or none (the agent's colours) |
 
-The shirt isn't chosen: it's the agent's, so people from different agents stay apart.
+Each person stands on a short bar in its agent's colours, so people from different agents
+stay apart whatever they wear. The idea is the user's: "the bar ... frees up the shirt for
+y'all to customize." The bar is in every pose, even the empty chair of an agent that isn't
+running.
 
-| Agent (its ACP `agentInfo` name contains) | Shirt |
+| Agent (its ACP `agentInfo` name contains) | Bar (and shirt, until one is chosen) |
 | --- | --- |
 | `claude` | Anthropic's clay orange |
-| `gemini` | Google's four colours, as stripes |
+| `gemini` | Google's four colours (side by side on the bar, stripes on a shirt) |
 | `codex`, `openai` | near black |
 | `copilot` | purple |
 | `qwen` | violet |

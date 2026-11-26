@@ -253,8 +253,9 @@ TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
 - **Pixel People** (with PlasmaLLM and two or more tabs): above the message box, one small
   pixel person per PlasmaLLM tab, posed by what its agent is doing: asleep when idle, a laptop
   for commands, a book for reading files, a desk and pencil for edits, a magnifier for searches,
-  a hand up when it needs your OK, a tablet for the tablet tools, and more. The shirt is the
-  agent's colour (Claude's orange, Gemini's four colours, ...). **Tap** a person to open its
+  a hand up when it needs your OK, a tablet for the tablet tools, and more. Each agent chooses
+  its own look, shirt included; the bar under its feet is its agent's colours (Claude's
+  orange, Gemini's four colours, ...). **Tap** a person to open its
   chat (that never stops anyone's work), **long press** for its name and what it's doing. The
   chat you're in is highlighted, and the strip hides while you type. See
   [docs/PIXEL-PEOPLE.md](docs/PIXEL-PEOPLE.md)

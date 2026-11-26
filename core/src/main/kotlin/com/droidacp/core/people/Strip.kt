@@ -44,7 +44,7 @@ fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<Strip
     return tabs.map { tab ->
         val name = folderName(tab.cwd).ifEmpty { tab.title ?: "Agent" }
         val agentName = tab.agentName ?: ownAgent
-        val shirt = people.shirtFor(agentName ?: tab.agentTitle)
+        val colors = people.agentFor(agentName ?: tab.agentTitle)
         val isThis = tab.sessionId == sessionId
         StripPerson(
             sessionId = tab.sessionId,
@@ -52,8 +52,8 @@ fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<Strip
             name = name,
             agent = agentName?.let(::agentLabel) ?: tab.agentTitle,
             chatTitle = tab.title,
-            look = people.defaultLook(tab.cwd.ifEmpty { tab.sessionId }, shirt, name.firstOrNull()).let { default ->
-                tab.person?.let { p -> people.chosen(default, p.skin, p.hair, p.hairColor, p.accessories, p.letter) } ?: default
+            look = people.defaultLook(tab.cwd.ifEmpty { tab.sessionId }, colors, name.firstOrNull()).let { default ->
+                tab.person?.let { p -> people.chosen(default, p.skin, p.hair, p.hairColor, p.accessories, p.letter, p.shirt) } ?: default
             },
             activity = when {
                 isThis -> activity

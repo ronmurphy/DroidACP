@@ -2,8 +2,10 @@ package com.droidacp.core.people
 
 /**
  * One agent's look, as it chose it once (or a default until it does): the option ids of
- * `sprites.txt`. [shirt] isn't chosen: it's the agent's ([PixelPeople.shirtFor]), so people
- * from different agents stay apart. [letter] goes on the shirt (A-Z, 0-9), or none.
+ * `sprites.txt`. [letter] goes on the shirt (A-Z, 0-9), or none; [shirt] is a chosen colour,
+ * or null for the agent's own. [agent] isn't chosen: it's whose colours the bar under the
+ * person has ([PixelPeople.agentFor], [PixelPeople.bar]), so people from different agents
+ * stay apart.
  */
 data class Look(
     val skin: String = "light",
@@ -11,7 +13,8 @@ data class Look(
     val hairColor: String = "brown",
     val accessories: List<String> = emptyList(),
     val letter: Char? = null,
-    val shirt: String = "unknown",
+    val shirt: String? = null,
+    val agent: String = "unknown",
 )
 
 /** A drawn person, [width] x [height] pixels of ARGB; 0 is transparent. */
@@ -25,7 +28,7 @@ class Sprite(val width: Int, val height: Int, val pixels: IntArray)
 class PixelPeople private constructor(
     private val palette: Map<Char, Int>,
     private val options: Map<String, Map<String, Int>>,
-    private val shirtColors: Map<String, List<Int>>,
+    private val agentColors: Map<String, List<Int>>,
     private val face: Section,
     private val hairs: Map<String, Section>,
     private val accessoryDefs: Map<String, Section>,
@@ -39,7 +42,8 @@ class PixelPeople private constructor(
     val hairStyles: List<String> get() = hairs.keys.toList()
     val hairColors: List<String> get() = options["haircolor"].orEmpty().keys.toList()
     val accessories: List<String> get() = accessoryDefs.keys.toList()
-    val shirts: List<String> get() = shirtColors.keys.toList()
+    val shirts: List<String> get() = options["shirt"].orEmpty().keys.toList()
+    val agents: List<String> get() = agentColors.keys.toList()
     val letters: Set<Char> get() = glyphs.keys
 
     /** [pose] drawn for [look]; an unknown pose is drawn as [IDLE_POSE], unknown options as their first. */
@@ -48,7 +52,7 @@ class PixelPeople private constructor(
         val p = poseDefs[pose] ?: poseDefs.getValue(IDLE_POSE)
         val skin = options["skin"]?.get(look.skin) ?: options.getValue("skin").values.first()
         val hairColor = options["haircolor"]?.get(look.hairColor) ?: options.getValue("haircolor").values.first()
-        val shirt = shirtColors[look.shirt] ?: shirtColors.getValue("unknown")
+        val shirt = look.shirt?.let { options["shirt"]?.get(it) }?.let(::listOf) ?: colorsOf(look.agent)
         val colors = HashMap(palette).apply {
             put('S', skin)
             put('s', shade(skin, 0.85))
@@ -113,18 +117,48 @@ class PixelPeople private constructor(
         return Sprite(SIZE, SIZE, px)
     }
 
-    /** The shirt for an agent, from its ACP `agentInfo` name (or title). */
-    fun shirtFor(agentName: String?): String {
+    /** The colours of an agent (its `agentFor` id), for its bar and its shirt until it chooses one. */
+    private fun colorsOf(agent: String): List<Int> = agentColors[agent] ?: agentColors.getValue("unknown")
+
+    /** Whose colours an agent wears, from its ACP `agentInfo` name (or title). */
+    fun agentFor(agentName: String?): String {
         val n = agentName?.lowercase() ?: return "unknown"
-        val id = SHIRT_NAMES.firstOrNull { (key, _) -> key in n }?.second ?: return "unknown"
-        return if (id in shirtColors) id else "unknown"
+        val id = AGENT_NAMES.firstOrNull { (key, _) -> key in n }?.second ?: return "unknown"
+        return if (id in agentColors) id else "unknown"
+    }
+
+    /**
+     * The bar under a person: [agent]'s colours side by side, [BAR_WIDTH] x [BAR_HEIGHT],
+     * outlined like the people (corners left out; in grey when the colours are as dark as
+     * the outline, so it shows on a dark screen) and its lower row shaded.
+     */
+    fun bar(agent: String): Sprite {
+        val colors = colorsOf(agent)
+        val outline = palette.getValue(if (colors.map(::luminance).average() < DARK) 'G' else 'k')
+        val inner = BAR_WIDTH - 2
+        val px = IntArray(BAR_WIDTH * BAR_HEIGHT)
+        for (y in 0 until BAR_HEIGHT) {
+            for (x in 0 until BAR_WIDTH) {
+                val edgeX = x == 0 || x == BAR_WIDTH - 1
+                val edgeY = y == 0 || y == BAR_HEIGHT - 1
+                if (edgeX && edgeY) continue
+                val c = if (edgeX || edgeY) {
+                    outline
+                } else {
+                    val base = colors[(x - 1) * colors.size / inner]
+                    if (y == BAR_HEIGHT - 2) shade(base, 0.8) else base
+                }
+                px[y * BAR_WIDTH + x] = (0xFF shl 24) or c
+            }
+        }
+        return Sprite(BAR_WIDTH, BAR_HEIGHT, px)
     }
 
     /**
      * A look for an agent that hasn't chosen its own yet: the same every time for [seed] (its
      * project folder, say), so its person doesn't change between restarts or devices.
      */
-    fun defaultLook(seed: String, shirt: String, letter: Char?): Look {
+    fun defaultLook(seed: String, agent: String, letter: Char?): Look {
         var h = 17
         for (c in seed) h = h * 31 + c.code
         val n = h and 0x7FFFFFFF
@@ -134,22 +168,31 @@ class PixelPeople private constructor(
             hair = styles[(n / 7) % styles.size],
             hairColor = NATURAL_HAIR.filter { it in hairColors }.let { it[(n / 53) % it.size] },
             letter = letter?.uppercaseChar()?.takeIf { it in glyphs },
-            shirt = shirt,
+            agent = agent,
         )
     }
 
     /**
      * The look an agent chose ([skin], [hair], ... as option ids), over [default]: a part it
-     * didn't choose, or chose with an id this file doesn't have, stays the default's. The
-     * shirt is always the default's (the agent's own).
+     * didn't choose, or chose with an id this file doesn't have, stays the default's (for the
+     * shirt, the agent's own colours). The bar is always the agent's.
      */
-    fun chosen(default: Look, skin: String?, hair: String?, hairColor: String?, accessories: List<String>, letter: Char?): Look =
+    fun chosen(
+        default: Look,
+        skin: String?,
+        hair: String?,
+        hairColor: String?,
+        accessories: List<String>,
+        letter: Char?,
+        shirt: String? = null,
+    ): Look =
         default.copy(
             skin = skin?.takeIf { it in skins } ?: default.skin,
             hair = hair?.takeIf { it in hairs } ?: default.hair,
             hairColor = hairColor?.takeIf { it in hairColors } ?: default.hairColor,
             accessories = accessories.filter { it in accessoryDefs }.distinct().take(MAX_ACCESSORIES),
             letter = letter?.uppercaseChar()?.takeIf { it in glyphs },
+            shirt = shirt?.takeIf { it in shirts },
         )
 
     private class Grid(val label: String, val x: Int, val y: Int, val rows: MutableList<String> = mutableListOf())
@@ -172,11 +215,14 @@ class PixelPeople private constructor(
         const val SIZE = 32
         const val IDLE_POSE = "sleep"
         const val MAX_ACCESSORIES = 2
+        const val BAR_WIDTH = 22
+        const val BAR_HEIGHT = 4
+        private const val DARK = 60.0
 
-        private val KINDS = setOf("palette", "option", "shirt", "face", "hair", "accessory", "part", "pose", "sign", "glyph")
+        private val KINDS = setOf("palette", "option", "agent", "face", "hair", "accessory", "part", "pose", "sign", "glyph")
 
-        // Agent names (as ACP adapters report them) to shirts; the first that matches wins.
-        private val SHIRT_NAMES = listOf(
+        // Agent names (as ACP adapters report them) to their colours; the first that matches wins.
+        private val AGENT_NAMES = listOf(
             "claude" to "claude",
             "gemini" to "gemini",
             "codex" to "codex",
@@ -233,7 +279,7 @@ class PixelPeople private constructor(
             }
             val palette = HashMap<Char, Int>()
             val options = LinkedHashMap<String, LinkedHashMap<String, Int>>()
-            val shirts = LinkedHashMap<String, List<Int>>()
+            val agents = LinkedHashMap<String, List<Int>>()
             val hairs = LinkedHashMap<String, Section>()
             val accessories = LinkedHashMap<String, Section>()
             val parts = HashMap<String, Grid>()
@@ -245,7 +291,7 @@ class PixelPeople private constructor(
                 when (sec.kind) {
                     "palette" -> sec.lines.forEach { palette[it[0].single()] = it[1].toInt(16) }
                     "option" -> sec.lines.forEach { options.getOrPut(sec.name, ::LinkedHashMap)[it[0]] = it[1].toInt(16) }
-                    "shirt" -> shirts[sec.name] = sec.args.map { it.toInt(16) }
+                    "agent" -> agents[sec.name] = sec.args.map { it.toInt(16) }
                     "face" -> face = sec
                     "hair" -> hairs[sec.name] = sec
                     "accessory" -> accessories[sec.name] = sec
@@ -256,7 +302,7 @@ class PixelPeople private constructor(
                 }
             }
             return PixelPeople(
-                palette, options, shirts, face ?: error("no face in sprites.txt"), hairs, accessories, parts, poses, signs, glyphs,
+                palette, options, agents, face ?: error("no face in sprites.txt"), hairs, accessories, parts, poses, signs, glyphs,
             )
         }
 

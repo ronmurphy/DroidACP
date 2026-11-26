@@ -44,21 +44,41 @@ class PixelPeopleTest {
         for (s in people.skins.filter { it != "light" }) {
             assertTrue(!people.render("talk", Look(skin = s)).pixels.contentEquals(base), "skin $s")
         }
+        assertTrue(people.shirts.size >= 12, "shirts: ${people.shirts}")
+        for (s in people.shirts) {
+            assertTrue(!people.render("talk", Look(shirt = s)).pixels.contentEquals(base), "shirt $s")
+        }
         for (ch in ('A'..'Z') + ('0'..'9')) assertTrue(ch in people.letters, "letter $ch")
         assertTrue(!people.render("talk", Look(letter = 'D')).pixels.contentEquals(base), "the letter shows")
     }
 
     @Test
-    fun eachAgentHasItsShirt() {
-        assertEquals("claude", people.shirtFor("@agentclientprotocol/claude-agent-acp"))
-        assertEquals("gemini", people.shirtFor("gemini-cli"))
-        assertEquals("codex", people.shirtFor("codex-acp"))
-        assertEquals("mistral", people.shirtFor("mistral-vibe"))
-        assertEquals("local", people.shirtFor("ollama"))
-        assertEquals("unknown", people.shirtFor("fake-plasmallm"))
-        assertEquals("unknown", people.shirtFor(null))
-        val claude = people.render("talk", Look(shirt = "claude")).pixels
-        assertTrue(!people.render("talk", Look(shirt = "gemini")).pixels.contentEquals(claude))
+    fun eachAgentHasItsColours() {
+        assertEquals("claude", people.agentFor("@agentclientprotocol/claude-agent-acp"))
+        assertEquals("gemini", people.agentFor("gemini-cli"))
+        assertEquals("codex", people.agentFor("codex-acp"))
+        assertEquals("mistral", people.agentFor("mistral-vibe"))
+        assertEquals("local", people.agentFor("ollama"))
+        assertEquals("unknown", people.agentFor("fake-plasmallm"))
+        assertEquals("unknown", people.agentFor(null))
+        // Until it chooses a shirt, an agent wears its colours; a chosen one replaces them.
+        val claude = people.render("talk", Look(agent = "claude")).pixels
+        assertTrue(!people.render("talk", Look(agent = "gemini")).pixels.contentEquals(claude))
+        val navy = people.render("talk", Look(agent = "claude", shirt = "navy")).pixels
+        assertTrue(!navy.contentEquals(claude))
+        assertTrue(navy.contentEquals(people.render("talk", Look(agent = "gemini", shirt = "navy")).pixels), "the shirt doesn't show the agent")
+        assertTrue(claude.contentEquals(people.render("talk", Look(agent = "claude", shirt = "plaid")).pixels), "an unknown shirt is the agent's")
+
+        // The bar always shows the agent: its colours side by side, outlined.
+        for (agent in people.agents) {
+            val bar = people.bar(agent)
+            assertEquals(PixelPeople.BAR_WIDTH * PixelPeople.BAR_HEIGHT, bar.pixels.size)
+            assertEquals(0, bar.pixels[0], "$agent: corners left out")
+        }
+        val gemini = people.bar("gemini").pixels
+        val top = (1 until PixelPeople.BAR_WIDTH - 1).map { gemini[PixelPeople.BAR_WIDTH + it] }.distinct()
+        assertEquals(listOf(0xFF4285F4.toInt(), 0xFFEA4335.toInt(), 0xFFFBBC05.toInt(), 0xFF34A853.toInt()), top)
+        assertTrue(people.bar("nobody").pixels.contentEquals(people.bar("unknown").pixels))
     }
 
     @Test
@@ -116,7 +136,8 @@ class PixelPeopleTest {
         assertEquals(listOf("DroidACP", "plasmaLLM", "tabLauncher", "g"), strip.map { it.name })
         assertEquals(listOf(true, false, false, false), strip.map { it.front })
         assertEquals(listOf("thinking", "working", "idle", "read"), strip.map { it.activity })
-        assertEquals(listOf("claude", "claude", "claude", "gemini"), strip.map { it.look.shirt })
+        assertEquals(listOf("claude", "claude", "claude", "gemini"), strip.map { it.look.agent })
+        assertEquals(listOf(null, null, null, null), strip.map { it.look.shirt })
         assertEquals("plasmaLLM (Claude): working", strip[1].description)
         assertEquals('T', strip[2].look.letter)
         assertEquals("Read Main.kt", strip[3].detail)
@@ -124,19 +145,20 @@ class PixelPeopleTest {
         // A chosen look (protocol 10) replaces the default; unknown ids keep the default's part.
         val chosen = tabs.map {
             when (it.sessionId) {
-                "chat-c" -> it.copy(person = PlasmaPerson("medium", "swoop", "teal", listOf("glasses", "headphones"), 'T'))
-                "chat-b" -> it.copy(person = PlasmaPerson("green-ish", "afro", null, listOf("cape", "scarf", "bow", "crown"), null))
+                "chat-c" -> it.copy(person = PlasmaPerson("medium", "swoop", "teal", listOf("glasses", "headphones"), 'T', "purple"))
+                "chat-b" -> it.copy(person = PlasmaPerson("green-ish", "afro", null, listOf("cape", "scarf", "bow", "crown"), null, "plaid"))
                 else -> it
             }
         }
         val looks = state.copy(plasmaLlm = state.plasmaLlm.copy(tabs = chosen)).stripPeople()
-        assertEquals(Look("medium", "swoop", "teal", listOf("glasses", "headphones"), 'T', "claude"), looks[2].look)
+        assertEquals(Look("medium", "swoop", "teal", listOf("glasses", "headphones"), 'T', shirt = "purple", agent = "claude"), looks[2].look)
         val b = looks[1].look
         val bDefault = strip[1].look
         assertEquals(listOf(bDefault.skin, bDefault.hair, bDefault.hairColor), listOf(b.skin, b.hair, b.hairColor))
         assertEquals(listOf("scarf", "bow"), b.accessories, "known ones only, at most two")
         assertEquals(null, b.letter, "no letter chosen")
-        assertEquals("claude", b.shirt)
+        assertEquals(null, b.shirt, "an unknown shirt is the agent's colours")
+        assertEquals("claude", b.agent)
         assertNotEquals(strip[0].look, strip[1].look)
     }
 }
