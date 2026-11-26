@@ -7,6 +7,7 @@ import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
 import com.droidacp.core.chat.AgentController
 import com.droidacp.core.chat.AgentEvent
+import com.droidacp.core.chat.ChatDigest
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.Profile
@@ -493,6 +494,36 @@ class PlasmaLlmTest {
         host.update("chat-a", agentChunk("a real answer", "msg-2"))
         host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
         withTimeout(5_000) { while (events.none { it is AgentEvent.TurnFinished }) delay(10) }
+    }
+
+    @Test
+    fun notesBetweenAgentsAreKeptButNotShownOrNotified() = runBlocking {
+        val note = "[Note from PlasmaLLM] PlasmaLLM delivered these notes.\n\nThe protocol doc changed."
+        val c = controller { history["chat-a"] = listOf(userChunk(note, "uuid-n1"), agentChunk("Noted.", "msg-n1")) }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val loaded = c.waitFor("the history") { it.items.size == 2 }.items
+        assertTrue((loaded[0] as ChatItem.User).agentNote, "a note in the history is hidden too")
+        assertTrue(ChatDigest.rows(c.state.value.items).none { note in it.text }, "and left out of the widget")
+        val events = scope.eventsOf(c)
+
+        // Delivered live: a turn by PlasmaLLM, no "finished" for it.
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", userChunk("[Notes from PlasmaLLM, TabDesk] Two notes.", "uuid-n2"))
+        host.update("chat-a", agentChunk("Both read.", "msg-n2"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        val after = c.waitFor("the note's turn") { !it.busy && it.items.size == 4 }
+        assertEquals(listOf(true, true), after.items.filterIsInstance<ChatItem.User>().map { it.agentNote })
+        assertEquals("Both read.", after.items.last().text(), "the agent's answer still shows")
+        delay(100)
+        assertTrue(events.none { it is AgentEvent.TurnFinished }, "events: $events")
+
+        // A message from the user is never taken for a note.
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", userChunk("a [Note from me] inside", "uuid-u"))
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "ended", "end_turn"))
+        val last = c.waitFor("the user's message") { !it.busy && it.items.size == 5 }.items.last() as ChatItem.User
+        assertFalse(last.agentNote)
     }
 
     @Test

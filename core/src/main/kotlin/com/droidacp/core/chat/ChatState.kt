@@ -29,6 +29,7 @@ sealed interface ChatItem {
     /**
      * [messageId]: set when the agent sends one (PlasmaLLM does, for prompts typed on the computer).
      * [remote]: typed outside PlasmaLLM, in the Claude app or claude.ai (Remote Control).
+     * [agentNote]: PlasmaLLM delivering notes from another tab's agent; kept, but not shown.
      */
     data class User(
         override val key: Long,
@@ -36,6 +37,7 @@ sealed interface ChatItem {
         val attachments: List<ContentBlock> = emptyList(),
         val messageId: String? = null,
         val remote: Boolean = false,
+        val agentNote: Boolean = false,
     ) : ChatItem
 
     data class Agent(

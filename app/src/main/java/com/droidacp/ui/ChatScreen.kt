@@ -353,7 +353,9 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(state.items, key = { it.key }) { item ->
+        // Notes between PlasmaLLM's agents aren't for the user (the agent's answer still shows).
+        val shown = state.items.filterNot { it is ChatItem.User && it.agentNote }
+        items(shown, key = { it.key }) { item ->
             when (item) {
                 is ChatItem.User -> UserBubble(item)
                 is ChatItem.Agent -> AgentMessage(item)

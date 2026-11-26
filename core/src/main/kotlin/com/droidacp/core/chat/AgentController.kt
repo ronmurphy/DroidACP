@@ -862,8 +862,11 @@ class AgentController(
                 Transcript.describeStopReason(reason)?.let { Transcript.addNote(ended, it) } ?: ended
             }
             val after = _state.value
-            // A turn that only showed a note (PlasmaLLM's Remote Control switch) isn't worth a "finished".
-            if (after.items.none { it.key >= remoteTurnFrom && it !is ChatItem.Note }) return
+            // A turn that only showed a note (PlasmaLLM's Remote Control switch) isn't worth a
+            // "finished", and nor is one answering notes between agents (not for the user).
+            val turnItems = after.items.filter { it.key >= remoteTurnFrom }
+            if (turnItems.all { it is ChatItem.Note }) return
+            if (turnItems.any { it is ChatItem.User && it.agentNote }) return
             _events.tryEmit(AgentEvent.TurnFinished(after.agentName, reason, after.lastAgentText, turn.sessionId))
         }
 

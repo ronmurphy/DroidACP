@@ -134,7 +134,13 @@ object Transcript {
             return state.copy(items = state.items.dropLast(1) + updated.copy(remote = last.remote || remote))
         }
         val item = when (content) {
-            is ContentBlock.Text -> ChatItem.User(state.nextKey, content.text, messageId = messageId, remote = remote)
+            is ContentBlock.Text -> ChatItem.User(
+                state.nextKey,
+                content.text,
+                messageId = messageId,
+                remote = remote,
+                agentNote = state.plasmaLlm != null && PlasmaLlm.isAgentNote(content.text),
+            )
             else -> ChatItem.User(state.nextKey, "", listOf(content), messageId, remote)
         }
         return state.copy(items = state.items + item, nextKey = state.nextKey + 1)

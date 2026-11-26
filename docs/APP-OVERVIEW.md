@@ -196,6 +196,12 @@ command. `Transcript` shows chunks with that prefix as one note
 (`PlasmaLlm.REMOTE_CONTROL_MESSAGE`), as PlasmaLLM does, and a remote turn that
 showed only notes posts no "finished" notification.
 
+PlasmaLLM's tabs' agents send each other notes, delivered as a prompt by
+"app" starting `[Note from <tab>] ` or `[Notes from <tab>, …] `. They're for
+the agents, not the user: `ChatItem.User.agentNote` keeps such a message in
+the transcript, the chat and the widget leave it out, and its turn posts no
+"finished" notification. The agent's answer still shows.
+
 Tool cards (`ToolCallCard.kt`): `ToolSize.detailLines` counts what an open card
 would show, a long line counting as one per 100 characters. Over 20 lines, the
 card stays closed, its header says "N lines" (or "+A −R" for edits, from

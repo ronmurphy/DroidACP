@@ -58,7 +58,7 @@ object ChatDigest {
     }
 
     private fun rowOf(item: ChatItem): Row? = when (item) {
-        is ChatItem.User -> textOrAttachments(item.text.trim().take(USER_CHARS), item.attachments.size)?.let { Row(Kind.User, it) }
+        is ChatItem.User -> if (item.agentNote) null else textOrAttachments(item.text.trim().take(USER_CHARS), item.attachments.size)?.let { Row(Kind.User, it) }
         is ChatItem.Agent -> textOrAttachments(plainText(item.text, AGENT_CHARS), item.attachments.size)?.let { Row(Kind.Agent, it) }
         is ChatItem.Note -> item.text.trim().takeIf { it.isNotEmpty() }?.let {
             Row(if (item.severity == ChatItem.Severity.Info) Kind.Note else Kind.Problem, it.take(USER_CHARS))

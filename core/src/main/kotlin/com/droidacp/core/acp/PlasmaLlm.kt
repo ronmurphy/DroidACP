@@ -116,6 +116,12 @@ object PlasmaLlm {
      */
     const val REMOTE_CONTROL_MESSAGE = "plasmallm-remote-control-"
 
+    /**
+     * A prompt PlasmaLLM wrote to deliver notes between its tabs' agents: they talk to
+     * each other this way, and the notes aren't for the user, so devices don't show them.
+     */
+    fun isAgentNote(text: String): Boolean = text.startsWith("[Note from ") || text.startsWith("[Notes from ")
+
     /** The `_meta` of a load retried after [Reason.OPEN_ELSEWHERE]: what to do about the other Claude. */
     fun openElsewhereMeta(choice: String): JsonObject = buildJsonObject {
         putJsonObject("plasmallm") { put("openElsewhere", choice) }
