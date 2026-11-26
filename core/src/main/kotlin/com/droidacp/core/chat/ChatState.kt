@@ -148,6 +148,8 @@ data class ChatState(
      * there, not on the tablet the agent is using (`_plasmallm/permission_elsewhere`).
      */
     val approvalElsewhere: Set<String> = emptySet(),
+    /** The connection dropped, and DroidACP will connect again by itself shortly (the tablet's relay). */
+    val reconnecting: Boolean = false,
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected

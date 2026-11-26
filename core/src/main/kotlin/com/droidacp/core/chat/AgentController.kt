@@ -80,11 +80,14 @@ fun interface TransportFactory {
  *
  * [tablet]: this device's tablet (TabDesk), which a PlasmaLLM agent with
  * [Profile.useTablet] on may use: see [TabletRelay]. Null where there's none to offer.
+ * While it's offered, a dropped connection is made again by itself, after each of
+ * [reconnectDelaysMs] in turn (the last one repeats).
  */
 class AgentController(
     private val appScope: CoroutineScope,
     private val clientVersion: String,
     private val tablet: Tablet? = null,
+    private val reconnectDelaysMs: List<Long> = RECONNECT_DELAYS_MS,
     private val transports: TransportFactory,
 ) {
     private val _state = MutableStateFlow(ChatState())
@@ -104,6 +107,13 @@ class AgentController(
     /** Numbers each connection, for TabDesk's Binder ids (`c3:mcp-request:7`). */
     private val nextConnection = AtomicLong(1)
 
+    /** Connecting again by itself after a drop (the tablet's relay), and how many tries so far. */
+    @Volatile
+    private var retry: Job? = null
+
+    @Volatile
+    private var retries = 0
+
     // ------------------------------------------------------------------
     // Connection lifecycle
     // ------------------------------------------------------------------
@@ -121,6 +131,17 @@ class AgentController(
     fun connect(
         profile: Profile,
         resumeSessionId: String? = null,
+        keepTranscript: Boolean = false,
+        startNew: Boolean = false,
+        resumeCwd: String? = null,
+    ) {
+        cancelRetry()
+        open(profile, resumeSessionId, keepTranscript, startNew, resumeCwd)
+    }
+
+    private fun open(
+        profile: Profile,
+        resumeSessionId: String?,
         keepTranscript: Boolean = false,
         startNew: Boolean = false,
         resumeCwd: String? = null,
@@ -150,6 +171,7 @@ class AgentController(
                 sessionId = if (keepTranscript) base.sessionId else null,
                 tablet = tablet?.takeIf { profile.offersTablet }?.let { TabletUse(it.link.status.value) },
                 approvalElsewhere = emptySet(),
+                reconnecting = false,
             )
         }
         newLink.transport.connect()
@@ -163,6 +185,7 @@ class AgentController(
     }
 
     fun disconnect() {
+        cancelRetry()
         val l = link ?: return
         link = null
         l.shutdown()
@@ -201,7 +224,10 @@ class AgentController(
             )
         }
         // Off: the running calls end as refused (-33001) before TabDesk is let go of.
-        if (!updated.offersTablet) link?.tabletAllowed(false)
+        if (!updated.offersTablet) {
+            link?.tabletAllowed(false)
+            cancelRetry()
+        }
         tablet?.link?.setWanted(updated.offersTablet)
         if (updated.offersTablet) link?.tabletAllowed(true)
     }
@@ -339,6 +365,49 @@ class AgentController(
                 _state.update { Transcript.addNote(it.copy(startingSession = false), "Sign-in failed: ${e.message}", ChatItem.Severity.Error) }
             }
         }
+    }
+
+    /**
+     * The user saved [p]. If it's the agent in use, what can change while connected does:
+     * the tablet setting and quiet mode. The rest takes effect on the next connection.
+     */
+    fun profileSaved(p: Profile) {
+        if (_state.value.profile?.id != p.id) return
+        _state.update { it.copy(profile = it.profile?.copy(quietHere = p.quietHere)) }
+        setTabletAllowed(p.useTablet)
+    }
+
+    /**
+     * Stop in the tablet's bar: the agent's turn, if one is running in the chat shown, and
+     * the agent's use of the tablet either way, until the next message the user sends.
+     */
+    fun stopTablet() {
+        if (_state.value.busy) cancelTurn() else link?.stopTablet()
+    }
+
+    /** Wait, then connect again to the same agent and chat: the tablet should stay reachable. */
+    private fun scheduleReconnect(profile: Profile) {
+        val wait = reconnectDelaysMs[minOf(retries, reconnectDelaysMs.size - 1)]
+        retries++
+        _state.update { it.copy(reconnecting = true) }
+        retry = appScope.launch {
+            kotlinx.coroutines.delay(wait)
+            val s = _state.value
+            val current = s.profile
+            // Something else connected meanwhile, or the setting went off.
+            if (link != null || current?.id != profile.id || !current.offersTablet) {
+                _state.update { it.copy(reconnecting = false) }
+                return@launch
+            }
+            open(current, resumeSessionId = s.sessionId, keepTranscript = true, resumeCwd = s.sessionCwd)
+        }
+    }
+
+    private fun cancelRetry() {
+        retry?.cancel()
+        retry = null
+        retries = 0
+        _state.update { if (it.reconnecting) it.copy(reconnecting = false) else it }
     }
 
     // ------------------------------------------------------------------
@@ -647,6 +716,9 @@ class AgentController(
                 )
             }
             if (wasConnected) _events.tryEmit(AgentEvent.ConnectionLost(_state.value.agentName, reason))
+            // The tablet's relay needs the connection: make it again by itself.
+            val current = _state.value.profile
+            if (current != null && current.id == profile.id && current.offersTablet && tablet != null) scheduleReconnect(current)
         }
 
         private suspend fun initialize() {
@@ -663,6 +735,7 @@ class AgentController(
                 host = hello?.chat?.takeIf { it.sessionId.isNotEmpty() }
                 relay?.offered = hello != null && hello.protocol >= PlasmaLlm.TABLET_PROTOCOL && init.capabilities.mcpOverAcp
                 watchTablet()
+                retries = 0
                 _state.update {
                     it.copy(
                         status = ConnectionStatus.Connected,
@@ -1101,6 +1174,9 @@ class AgentController(
 
         /** Give up following PlasmaLLM's chat after this many failed opens in a row (reconnecting resets it). */
         private const val MAX_FOLLOW_FAILURES = 3
+
+        /** The waits before connecting again by itself, growing; the last one repeats. */
+        val RECONNECT_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L, 30_000L, 60_000L, 120_000L, 300_000L)
 
         /** Convenience for tests and simple setups: bridge agents only. */
         fun create(scope: CoroutineScope, version: String = "dev"): AgentController {

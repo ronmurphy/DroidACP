@@ -65,6 +65,9 @@ data class TabletStatus(
         /** TabDesk isn't installed (or Android hides it: the `<queries>` entry). */
         NotInstalled,
 
+        /** TabDesk is installed, but too old to have the agent service. */
+        NoService,
+
         /** Binding, checking the version, or connecting. */
         Connecting,
 
@@ -79,6 +82,21 @@ data class TabletStatus(
     }
 
     val connected: Boolean get() = reach == Reach.Connected
+
+    /**
+     * Why calls can't reach TabDesk now, in words that follow PlasmaLLM's "The tablet isn't
+     * available right now: ". Null while connected: then TabDesk answers for itself.
+     */
+    val unavailable: String?
+        get() = when (reach) {
+            Reach.Connected -> null
+            Reach.Off -> "DroidACP isn't connected to TabDesk"
+            Reach.NotInstalled -> "TabDesk isn't installed on the tablet"
+            Reach.NoService -> "TabDesk on the tablet is too old to be used by an agent: update TabDesk"
+            Reach.Connecting -> "DroidACP is still connecting to TabDesk"
+            Reach.Incompatible -> "TabDesk's agent interface is newer: update DroidACP"
+            Reach.Lost -> "TabDesk stopped, and DroidACP is connecting to it again"
+        }
 
     /** TabDesk lets DroidACP use the tablet: approved, and not switched off or revoked. */
     val approved: Boolean get() = connected && approval == APPROVED && control != REVOKED

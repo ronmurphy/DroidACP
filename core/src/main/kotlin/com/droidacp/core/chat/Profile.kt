@@ -48,6 +48,8 @@ enum class ProfileKind(val id: String) {
  * @param repoToken Cloud agents: a GitHub access token for that repository.
  * @param useTablet PlasmaLLM agents: "Let the agent use this tablet (through TabDesk)".
  *                  Off by default; it does nothing unless TabDesk is installed.
+ * @param quietHere PlasmaLLM agents using this tablet: no "finished", permission or problem
+ *                  notifications from this agent on this device (the phone has them).
  */
 data class Profile(
     val id: String = UUID.randomUUID().toString(),
@@ -60,6 +62,7 @@ data class Profile(
     val repoUrl: String = "",
     val repoToken: String = "",
     val useTablet: Boolean = false,
+    val quietHere: Boolean = false,
 ) {
     val isLocal: Boolean get() = kind == ProfileKind.Local
     val isCloud: Boolean get() = kind == ProfileKind.Cloud
@@ -91,6 +94,7 @@ data class Profile(
         put("repoUrl", repoUrl)
         put("repoToken", repoToken)
         if (useTablet) put("useTablet", true)
+        if (quietHere) put("quietHere", true)
     }
 
     /** Problems that would stop a connection from working, for the edit form. */
@@ -154,6 +158,7 @@ data class Profile(
                 repoUrl = o.str("repoUrl") ?: "",
                 repoToken = o.str("repoToken") ?: "",
                 useTablet = o.bool("useTablet") ?: false,
+                quietHere = o.bool("quietHere") ?: false,
             )
         }
 

@@ -41,13 +41,28 @@ object Notifications {
     /** One-line summary of what the agent is doing, for the ongoing notification and the widget. */
     fun statusText(state: ChatState): String = when {
         state.status is ConnectionStatus.Connecting -> "Connecting…"
+        state.status is ConnectionStatus.Failed && state.reconnecting -> "Disconnected; connecting again soon…"
         state.status is ConnectionStatus.Failed -> "Disconnected"
         state.status is ConnectionStatus.Disconnected -> "Not connected"
         state.permissions.isNotEmpty() -> "Needs your permission"
+        state.approvalElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop"
         state.cancelling -> "Stopping…"
         state.busy -> "Working…"
         state.authRequired -> "Sign-in needed"
         else -> "Ready"
+    }
+
+    /**
+     * The ongoing notification's line. On a tablet that's quiet for this agent (the phone has
+     * its notifications), it says what this device is for.
+     */
+    fun ongoingText(state: ChatState): String {
+        val tablet = state.tablet
+        return when {
+            tablet != null && state.isConnected && tablet.inUse -> "The agent is using this tablet"
+            tablet != null && state.profile?.quietHere == true && state.isConnected -> "Letting the agent use this tablet"
+            else -> statusText(state)
+        }
     }
 
     /** The silent, ongoing notification that keeps the foreground service (and connection) alive. */
@@ -55,7 +70,7 @@ object Notifications {
         NotificationCompat.Builder(context, CHANNEL_CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_agent)
             .setContentTitle(state.agentName)
-            .setContentText(statusText(state))
+            .setContentText(ongoingText(state))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)

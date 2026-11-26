@@ -51,7 +51,7 @@ class AgentService : Service() {
         if (watcher == null) {
             watcher = app.appScope.launch {
                 app.controller.state
-                    .map { it.agentName to Notifications.statusText(it) }
+                    .map { it.agentName to Notifications.ongoingText(it) }
                     .distinctUntilChanged()
                     .collect { Notifications.updateOngoing(this@AgentService, app.controller.state.value) }
             }

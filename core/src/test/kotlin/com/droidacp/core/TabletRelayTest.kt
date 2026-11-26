@@ -60,10 +60,14 @@ class TabletRelayTest {
 
     private val profile = Profile(name = "laptop", kind = ProfileKind.PlasmaLlm, url = "my-laptop", cwd = "", useTablet = true)
 
-    private fun controller(tablet: Boolean = true, configure: FakePlasmaLlm.() -> Unit = { protocol = 7 }) =
-        AgentController(scope, "test", tablet = Tablet(tabdesk, SERVER_ID).takeIf { tablet }) { _, listener ->
-            FakePlasmaLlm(listener).apply(configure).also { hosts += it }
-        }
+    /** Reconnecting by itself waits a minute unless a test says otherwise. */
+    private fun controller(
+        tablet: Boolean = true,
+        reconnect: List<Long> = listOf(60_000L),
+        configure: FakePlasmaLlm.() -> Unit = { protocol = 7 },
+    ) = AgentController(scope, "test", tablet = Tablet(tabdesk, SERVER_ID).takeIf { tablet }, reconnectDelaysMs = reconnect) { _, listener ->
+        FakePlasmaLlm(listener).apply(configure).also { hosts += it }
+    }
 
     private suspend fun AgentController.waitFor(what: String, check: (ChatState) -> Boolean): ChatState =
         try {
@@ -389,6 +393,7 @@ class TabletRelayTest {
         assertTrue(c.sendPrompt("use the tablet"))
         assertEquals(1, tabdesk.resumes.get(), "our own message lets it go on")
         c.waitFor("busy") { it.busy }
+        host.waitForRequests("session/prompt", 1) // sent from a coroutine: let it arrive first
         c.cancelTurn()
         assertEquals(1, tabdesk.stops.get())
         // The fake records requests on its own thread.
@@ -457,6 +462,64 @@ class TabletRelayTest {
         host.notify(PlasmaLlm.PERMISSION_RESOLVED, buildJsonObject { put("sessionId", "chat-a"); put("toolCallId", "tool-1") })
         c.waitFor("resolved") { it.approvalElsewhere.isEmpty() }
         assertTrue(c.state.value.permissions.isEmpty(), "never asked here")
+    }
+
+    // --- staying connected for the relay (D14) ---
+
+    @Test
+    fun aDroppedConnectionIsMadeAgainByItselfAndTheTabletDeclaredAgain() = runBlocking {
+        val c = controller(reconnect = listOf(50L))
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        host.close()
+        waitUntil("a second connection") { hosts.size == 2 }
+        c.joined("chat-a")
+        val s = c.declared()
+        assertFalse(s.reconnecting)
+        assertEquals(SERVER_ID, declaredServers().single().second?.str("serverId"), "declared on the new connection")
+    }
+
+    @Test
+    fun aLaptopThatIsntThereIsTriedAgainWithAGrowingWait() = runBlocking {
+        val c = controller(reconnect = listOf(50L, 150L)) { protocol = 7; refuse = hosts.size < 2 } // counted before this one joins
+        val started = System.nanoTime()
+        c.connect(profile)
+        c.waitFor("waiting to try again") { it.reconnecting }
+        c.joined("chat-a")
+        val tookMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(3, hosts.size)
+        assertTrue(tookMs >= 200, "waited 50 then 150 ms, took $tookMs")
+        assertFalse(c.state.value.reconnecting)
+    }
+
+    @Test
+    fun noReconnectWithoutTheSettingOrAfterDisconnect() = runBlocking {
+        val c = controller(reconnect = listOf(50L))
+        c.connect(profile.copy(useTablet = false))
+        c.joined("chat-a")
+        host.close()
+        delay(300)
+        assertEquals(1, hosts.size, "the setting is off")
+
+        c.connect(profile)
+        c.joined("chat-a")
+        host.close()
+        c.disconnect()
+        delay(300)
+        assertEquals(2, hosts.size, "the user disconnected")
+        assertFalse(c.state.value.reconnecting)
+    }
+
+    @Test
+    fun theBarsStopReachesTabDeskWithoutATurnRunningHere() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        c.stopTablet()
+        assertEquals(1, tabdesk.stops.get())
+        assertTrue(host.requests.none { it.first == "session/cancel" })
     }
 
     companion object {

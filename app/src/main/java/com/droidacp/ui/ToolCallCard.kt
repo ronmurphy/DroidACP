@@ -61,7 +61,13 @@ import com.droidacp.core.diff.LineDiff
  * is easier to read there, and a long chat stays light, since closed cards aren't drawn.
  */
 @Composable
-fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: Boolean = false) {
+fun ToolCallCard(
+    call: ToolCall,
+    modifier: Modifier = Modifier,
+    startExpanded: Boolean = false,
+    /** Its permission is asked on another device or the laptop, not here (this tablet is the one it acts on). */
+    waitingElsewhere: Boolean = false,
+) {
     // Edits are interesting enough to show open by default (when short).
     val hasDiff = call.content.any { it is ToolContent.Diff }
     var expanded by rememberSaveable(call.id) { mutableStateOf(startExpanded || hasDiff) }
@@ -123,6 +129,14 @@ fun ToolCallCard(call: ToolCall, modifier: Modifier = Modifier, startExpanded: B
             )
         }
 
+        if (waitingElsewhere) {
+            Text(
+                "Waiting for approval on your phone or laptop",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            )
+        }
         if (open) {
             ToolDetails(call, wrap = false, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp))
         }

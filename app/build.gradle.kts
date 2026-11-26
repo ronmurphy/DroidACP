@@ -66,6 +66,8 @@ android {
 
     buildFeatures {
         compose = true
+        // TabDesk's agent service (IAgentService.aidl, copied unchanged from TabDesk).
+        aidl = true
         buildConfig = true
     }
 

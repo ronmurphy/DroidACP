@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- Asked only when "Let the agent use this tablet" goes on: the relay must stay connected. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!--
         The built-in agent reads, edits and runs commands in a project folder you
         choose, e.g. Documents/DroidACP. Android 11+ calls that "All files access"
@@ -27,6 +29,8 @@
     <queries>
         <package android:name="com.termux" />
         <package android:name="com.tailscale.ipn" />
+        <!-- TabDesk, whose agent service lets PlasmaLLM's agent use this tablet. -->
+        <package android:name="dev.tabdesk" />
         <!-- Speech input for the widget's quick-ask box. -->
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />

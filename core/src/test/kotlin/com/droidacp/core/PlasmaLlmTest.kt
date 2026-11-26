@@ -760,8 +760,12 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
         got.take(count).map { it.second }
     }
 
+    /** The connection fails instead of opening (the laptop asleep, say). */
+    @Volatile
+    var refuse = false
+
     override fun connect() {
-        executor.execute { listener.onOpen() }
+        executor.execute { if (refuse) listener.onClosed("refused", null) else listener.onOpen() }
     }
 
     override fun close() {
