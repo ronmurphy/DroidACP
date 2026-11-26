@@ -26,12 +26,16 @@ sealed interface ConnectionStatus {
 sealed interface ChatItem {
     val key: Long
 
-    /** [messageId]: set when the agent sends one (PlasmaLLM does, for prompts typed on the computer). */
+    /**
+     * [messageId]: set when the agent sends one (PlasmaLLM does, for prompts typed on the computer).
+     * [remote]: typed outside PlasmaLLM, in the Claude app or claude.ai (Remote Control).
+     */
     data class User(
         override val key: Long,
         val text: String,
         val attachments: List<ContentBlock> = emptyList(),
         val messageId: String? = null,
+        val remote: Boolean = false,
     ) : ChatItem
 
     data class Agent(

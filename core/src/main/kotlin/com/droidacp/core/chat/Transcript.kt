@@ -27,7 +27,7 @@ object Transcript {
             if (state.busy && !state.remoteTurn && !state.replaying && state.plasmaLlm == null) {
                 state
             } else {
-                appendUser(state, update.content, update.messageId)
+                appendUser(state, update.content, update.messageId, update.remote)
             }
         is SessionUpdate.ToolCallStarted -> upsertTool(state, update.call.id) { existing ->
             existing?.let { mergeFull(it, update.call) } ?: update.call
@@ -109,7 +109,7 @@ object Transcript {
         return state.copy(items = state.items + ChatItem.Thought(state.nextKey, messageId, text), nextKey = state.nextKey + 1)
     }
 
-    private fun appendUser(state: ChatState, content: ContentBlock, messageId: String?): ChatState {
+    private fun appendUser(state: ChatState, content: ContentBlock, messageId: String?, remote: Boolean): ChatState {
         val last = state.items.lastOrNull()
         // Stricter than agent chunks: two prompts in a row (one sent here, one typed on
         // the computer) must stay two bubbles, so the ids have to match exactly.
@@ -118,11 +118,12 @@ object Transcript {
                 is ContentBlock.Text -> last.copy(text = last.text + content.text)
                 else -> last.copy(attachments = last.attachments + content)
             }
-            return state.copy(items = state.items.dropLast(1) + updated)
+            // One marked chunk marks the whole message.
+            return state.copy(items = state.items.dropLast(1) + updated.copy(remote = last.remote || remote))
         }
         val item = when (content) {
-            is ContentBlock.Text -> ChatItem.User(state.nextKey, content.text, messageId = messageId)
-            else -> ChatItem.User(state.nextKey, "", listOf(content), messageId)
+            is ContentBlock.Text -> ChatItem.User(state.nextKey, content.text, messageId = messageId, remote = remote)
+            else -> ChatItem.User(state.nextKey, "", listOf(content), messageId, remote)
         }
         return state.copy(items = state.items + item, nextKey = state.nextKey + 1)
     }

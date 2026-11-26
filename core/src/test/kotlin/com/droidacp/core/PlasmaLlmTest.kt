@@ -440,6 +440,31 @@ class PlasmaLlmTest {
     }
 
     @Test
+    fun messagesTypedInTheClaudeAppAreMarkedLiveAndInTheHistory() = runBlocking {
+        val c = controller {
+            history["chat-a"] = listOf(
+                userChunk("typed on the laptop", "uuid-1"),
+                agentChunk("ok", "msg-1"),
+                userChunk("from my phone's Claude app", "uuid-2", remote = true),
+                userImage("uuid-2", remote = true),
+                agentChunk("got it", "msg-2"),
+            )
+        }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        val loaded = c.waitFor("the history") { it.items.size == 4 }.items.filterIsInstance<ChatItem.User>()
+        assertEquals(listOf(false, true), loaded.map { it.remote })
+        assertEquals(1, loaded[1].attachments.size, "the picture joins its message")
+
+        // Live: a picture-only message, marked, then a prompt from the laptop, not marked.
+        host.notify(PlasmaLlm.TURN, turn("chat-a", "started"))
+        host.update("chat-a", userImage("uuid-3", remote = true))
+        host.update("chat-a", userChunk("and from the laptop", "plasmallm-7"))
+        val live = c.waitFor("the live messages") { it.items.size == 6 }.items.filterIsInstance<ChatItem.User>()
+        assertEquals(listOf(false, true, true, false), live.map { it.remote })
+    }
+
+    @Test
     fun aRealStopStillSaysStopped() = runBlocking {
         val c = controller { holdPrompts = true }
         c.connect(plasmaProfile)
@@ -567,10 +592,18 @@ class PlasmaLlmTest {
     )
 }
 
-private fun userChunk(text: String, messageId: String) = buildJsonObject {
+private fun userChunk(text: String, messageId: String, remote: Boolean = false) = buildJsonObject {
     put("sessionUpdate", "user_message_chunk")
     put("messageId", messageId)
     putJsonObject("content") { put("type", "text"); put("text", text) }
+    if (remote) putJsonObject("_meta") { putJsonObject("plasmallm") { put("remote", true) } }
+}
+
+private fun userImage(messageId: String, remote: Boolean) = buildJsonObject {
+    put("sessionUpdate", "user_message_chunk")
+    put("messageId", messageId)
+    putJsonObject("content") { put("type", "image"); put("mimeType", "image/png"); put("data", "iVBORw0KGgo=") }
+    if (remote) putJsonObject("_meta") { putJsonObject("plasmallm") { put("remote", true) } }
 }
 
 private fun agentChunk(text: String, messageId: String? = null) = buildJsonObject {

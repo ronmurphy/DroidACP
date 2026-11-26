@@ -184,6 +184,12 @@ a `user_message_chunk`; since PlasmaLLM never sends a device its own prompt,
 `Transcript` shows it, where for other agents a user chunk during our own turn
 is dropped as an echo.
 
+PlasmaLLM 6 marks such messages, typed in the Claude app or claude.ai, with
+`_meta.plasmallm.remote: true` on each of their `user_message_chunk`s, live and
+in a loaded chat's history. `ChatItem.User.remote` keeps it (one marked chunk
+marks the message), and `UserBubble` shows it as PlasmaLLM does: a "You – remote
+message" header and Claude's orange (#d97757) edge, with a faint orange fill.
+
 Leaving a chat for another (`AgentController.leave`) unloads it: a running turn
 is cancelled (not PlasmaLLM's, which is the computer's call), its permission
 questions are answered `cancelled`, its later `session/update`s, permission

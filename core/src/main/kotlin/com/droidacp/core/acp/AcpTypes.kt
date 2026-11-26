@@ -301,7 +301,11 @@ private fun parsePlanEntries(o: JsonObject): List<PlanEntry> = o.objects("entrie
 // ---------------------------------------------------------------------------
 
 sealed interface SessionUpdate {
-    data class UserMessageChunk(val content: ContentBlock, val messageId: String?) : SessionUpdate
+    /**
+     * [remote]: PlasmaLLM's `_meta.plasmallm.remote` (protocol 6), a message typed outside
+     * PlasmaLLM, in the Claude app or claude.ai over Remote Control.
+     */
+    data class UserMessageChunk(val content: ContentBlock, val messageId: String?, val remote: Boolean = false) : SessionUpdate
     data class AgentMessageChunk(val content: ContentBlock, val messageId: String?) : SessionUpdate
     data class AgentThoughtChunk(val content: ContentBlock, val messageId: String?) : SessionUpdate
     data class ToolCallStarted(val call: ToolCall) : SessionUpdate
@@ -324,7 +328,11 @@ sealed interface SessionUpdate {
 
     companion object {
         fun parse(o: JsonObject): SessionUpdate = when (val type = o.str("sessionUpdate")) {
-            "user_message_chunk" -> UserMessageChunk(ContentBlock.parse(o.obj("content")), o.str("messageId"))
+            "user_message_chunk" -> UserMessageChunk(
+                ContentBlock.parse(o.obj("content")),
+                o.str("messageId"),
+                remote = o.obj("_meta")?.obj("plasmallm")?.bool("remote") == true,
+            )
             "agent_message_chunk" -> AgentMessageChunk(ContentBlock.parse(o.obj("content")), o.str("messageId"))
             "agent_thought_chunk" -> AgentThoughtChunk(ContentBlock.parse(o.obj("content")), o.str("messageId"))
             "tool_call" -> ToolCallStarted(ToolCallPatch.parse(o).toToolCall())

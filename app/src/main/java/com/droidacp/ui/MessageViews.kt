@@ -1,6 +1,7 @@
 package com.droidacp.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -44,14 +48,30 @@ import com.droidacp.core.chat.ChatItem
 
 @Composable
 fun UserBubble(item: ChatItem.User) {
+    // A message typed in the Claude app or claude.ai (Remote Control): Claude's orange, as
+    // PlasmaLLM shows it, kept faint behind the text so it reads in light and dark themes.
+    val scheme = MaterialTheme.colorScheme
+    val dark = scheme.surface.luminance() < 0.5f
+    val container = if (item.remote) ClaudeOrange.copy(alpha = if (dark) 0.22f else 0.14f).compositeOver(scheme.surface) else scheme.primaryContainer
+    val content = if (item.remote) scheme.onSurface else scheme.onPrimaryContainer
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            color = container,
+            contentColor = content,
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp),
+            border = if (item.remote) BorderStroke(1.5.dp, ClaudeOrange) else null,
             modifier = Modifier.widthIn(max = 600.dp),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (item.remote) {
+                    Text(
+                        "You – remote message",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        // Lighter in the dark theme and darker in the light one, for contrast on the fill.
+                        color = if (dark) ClaudeOrangeLight else ClaudeOrangeDeep,
+                    )
+                }
                 for (attachment in item.attachments) AttachmentView(attachment)
                 if (item.text.isNotEmpty()) {
                     SelectionContainer { Text(item.text, style = MaterialTheme.typography.bodyLarge) }
@@ -60,6 +80,11 @@ fun UserBubble(item: ChatItem.User) {
         }
     }
 }
+
+/** Claude's orange, PlasmaLLM's colour for remote messages. */
+private val ClaudeOrange = Color(0xFFD97757)
+private val ClaudeOrangeLight = Color(0xFFE8957A)
+private val ClaudeOrangeDeep = Color(0xFF9E4127)
 
 @Composable
 fun AgentMessage(item: ChatItem.Agent) {

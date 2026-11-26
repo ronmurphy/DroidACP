@@ -169,7 +169,9 @@ Then:
   or with PlasmaLLM's tabs, the tab in front. A turn in a tab left behind keeps working
   there, and the note says so.
 - **Prompts typed on the computer show up here**, with the reply, and the chat shows
-  as working. Stop works for them too.
+  as working. Stop works for them too. So do messages sent from the Claude app or
+  claude.ai when PlasmaLLM's Remote Control is on; they're marked "You – remote
+  message", in orange, as in PlasmaLLM.
 - **A permission prompt answered on the computer closes here**: the first answer counts.
 - A notification tells you when a turn ends while DroidACP is in the background.
   Its **Reply** button sends an answer to that chat without opening the app. If
