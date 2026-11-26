@@ -349,10 +349,13 @@ reads only their envelope; TabDesk decides what's allowed.
   turn the app started by itself.
 - **🛑 Hold** (plan D20). `AgentController.holdTablet()` saves the hold first
   (`Tablet.held`, kept in the app's `tablet` preferences by `TabDeskLink.saveHeld`),
-  then does what Stop does. While held, `TabletRelay` refuses every `mcp/message`
+  ends the running calls refused and stops TabDesk; it cancels the turn only if the
+  agent is using the tablet at that moment. While held, `TabletRelay` refuses every `mcp/message`
   itself with -33001 and its `HELD` reason, including calls already running, and the
   user's next message calls no `resume()`. Only `releaseTablet()` (the bar's or the
-  menu's "Let it go on", after a confirm) lifts it, and calls `resume()`. The tablet
+  menu's "Let it go on", after one confirm dialog) lifts it, and calls `resume()` whenever
+  TabDesk is connected. The refusal's reason travels with the cancel (`Refused`), so a
+  hold lifted at once still answers the cancelled call -33001. The tablet
   stays declared meanwhile, so lifting it works in the same chat; TabDesk's own
   Continue doesn't lift DroidACP's hold.
 - **Approval elsewhere.** `_plasmallm/permission_elsewhere` marks a tool call as

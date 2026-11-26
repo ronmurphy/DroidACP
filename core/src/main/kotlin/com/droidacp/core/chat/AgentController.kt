@@ -410,15 +410,23 @@ class AgentController(
     }
 
     /**
-     * 🛑 Hold (plan D20): Stop, and then the agent may not use this tablet at all until the
-     * user lets it go on with [releaseTablet]: not after their next message, nor after a
-     * restart. Saved first, so it holds even if what follows fails.
+     * 🛑 Hold (plan D20): the agent may not use this tablet at all until the user lets it go
+     * on with [releaseTablet]: not after their next message, nor after a restart. Saved first,
+     * so it holds even if what follows fails. Running calls end refused and TabDesk stops, as
+     * with Stop; the turn is cancelled too, but only if it's using the tablet right now, so a
+     * precaution taken from the menu doesn't end the agent's other work. Its next tablet call
+     * is refused, with the reason.
      */
     fun holdTablet() {
         val t = tablet ?: return
+        val l = link
+        val s = _state.value
+        // Asked before the calls are refused, which ends them.
+        val turnUsesIt = l != null && s.busy && s.sessionId != null && l.tabletInUse()
         t.setHeld(true)
-        link?.tabletHeld()
-        stopTablet()
+        l?.tabletHeld()
+        // cancelTurn() stops TabDesk too.
+        if (turnUsesIt) cancelTurn() else l?.stopTablet()
     }
 
     /** The user let the agent use this tablet again, after a hold. */
@@ -1012,16 +1020,27 @@ class AgentController(
             if (r.allowed && r.declared) t.link.resume()
         }
 
+        /** The agent is using the tablet now: a call running, or TabDesk says it's active. */
+        fun tabletInUse(): Boolean {
+            val r = relay ?: return false
+            return r.calls.value > 0 || tablet?.link?.status?.value?.control == TabletStatus.ACTIVE
+        }
+
         /** The tablet was put on hold: running calls end refused, and the bar says so. */
         fun tabletHeld() {
             relay?.hold()
             publishTablet()
         }
 
-        /** The hold was lifted: TabDesk lets the agent go on again, as after a Stop. */
+        /**
+         * The hold was lifted: TabDesk lets the agent go on again, as after a Stop. Whenever
+         * TabDesk is connected, declared to PlasmaLLM yet or not, so it isn't left stopped
+         * from the hold.
+         */
         fun tabletReleased() {
             val r = relay ?: return
-            if (r.allowed && r.declared) tablet?.link?.resume()
+            val t = tablet ?: return
+            if (r.allowed && t.link.status.value.connected) t.link.resume()
             publishTablet()
         }
 

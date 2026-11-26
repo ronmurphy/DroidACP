@@ -508,6 +508,27 @@ class TabletRelayTest {
     }
 
     @Test
+    fun aHoldDuringATurnThatIsntUsingTheTabletLeavesTheTurnRunning() = runBlocking {
+        val c = controller { protocol = 7; holdPrompts = true }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        assertTrue(c.sendPrompt("refactor the parser"))
+        c.waitFor("busy") { it.busy }
+        host.waitForRequests("session/prompt", 1)
+
+        c.holdTablet() // from the menu, as a precaution
+        assertEquals(1, tabdesk.stops.get(), "TabDesk stops")
+        c.waitFor("the bar says on hold") { it.tablet?.held == true }
+        delay(100)
+        assertTrue(host.requests.none { it.first == "session/cancel" }, "the agent's other work goes on")
+        assertTrue(c.state.value.busy)
+        val refused = withTimeout(5_000) { host.mcpMessage(41, screenCall()).await() }
+        assertEquals(-33001L, refused.errorCode(), "but not on the tablet")
+        assertTrue(tabdesk.sentIds.isEmpty())
+    }
+
+    @Test
     fun aHoldSavedBeforeARestartStillHoldsAndTheTabletStaysDeclared() = runBlocking {
         val c = controller(held = true)
         c.connect(profile)

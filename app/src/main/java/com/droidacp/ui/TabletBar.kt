@@ -11,10 +11,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -82,11 +78,11 @@ fun TabletBar(
     state: ChatState,
     onStop: () -> Unit,
     onHold: () -> Unit,
+    /** "Let it go on": the caller asks to confirm first ([ReleaseTabletDialog]). */
     onRelease: () -> Unit,
     onOpenTabDesk: () -> Unit,
 ) {
     val bar = tabletBarText(state) ?: return
-    var confirmRelease by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     Surface(
         color = when (bar.look) {
@@ -120,20 +116,11 @@ fun TabletBar(
                 when (button) {
                     TabletBarText.Button.Stop -> TextButton(onClick = onStop) { Text("Stop", color = colors.error) }
                     TabletBarText.Button.Hold -> HoldButton(onHold)
-                    TabletBarText.Button.Release -> TextButton(onClick = { confirmRelease = true }) { Text("Let it go on") }
+                    TabletBarText.Button.Release -> TextButton(onClick = onRelease) { Text("Let it go on") }
                     TabletBarText.Button.OpenTabDesk -> TextButton(onClick = onOpenTabDesk) { Text("Open TabDesk") }
                 }
             }
         }
-    }
-    if (confirmRelease) {
-        ReleaseTabletDialog(
-            onRelease = {
-                confirmRelease = false
-                onRelease()
-            },
-            onDismiss = { confirmRelease = false },
-        )
     }
 }
 

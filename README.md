@@ -201,9 +201,10 @@ starts, so the tablet works in chats started after both are on.
   switched off there, an older PlasmaLLM). Stop here, or on TabDesk's own notification,
   also stops the turn; the agent can use the tablet again after your next message.
 - **🛑 Hold**, beside Stop on the bar and in the chat's ⋮ menu at any time, is the
-  lasting one: it stops the turn too, then keeps the agent off the tablet entirely
-  (screen reads and screenshots included) until you choose **Let it go on** in DroidACP
-  on the tablet. Your next message doesn't lift it, and neither does a restart. Useful
+  lasting one: it keeps the agent off the tablet entirely (screen reads and screenshots
+  included) until you choose **Let it go on** in DroidACP on the tablet. It stops the
+  turn too if the agent is using the tablet at that moment; otherwise the agent's other
+  work goes on, and its next tablet call is refused. Your next message doesn't lift it, and neither does a restart. Useful
   when the tablet watches something private, a baby monitor say. The agent is told the
   tablet is on hold, and that asking again won't lift it.
 - **Quiet on this device**: no "finished", permission or problem notifications from

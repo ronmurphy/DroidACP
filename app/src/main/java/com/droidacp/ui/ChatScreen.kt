@@ -207,9 +207,15 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            Composer(state = state, actions = actions, attachments = attachments, focusRequest = focusRequest, draft = draft, onSent = {
-                scope.launch { follower.scrollToEnd() }
-            })
+            Composer(
+                state = state,
+                actions = actions,
+                attachments = attachments,
+                focusRequest = focusRequest,
+                draft = draft,
+                onSent = { scope.launch { follower.scrollToEnd() } },
+                onReleaseTablet = { confirmRelease = true },
+            )
         },
     ) { padding ->
         BoxWithConstraints(

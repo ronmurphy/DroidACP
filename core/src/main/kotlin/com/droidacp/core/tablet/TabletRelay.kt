@@ -93,13 +93,24 @@ class TabletRelay(
      */
     fun setAllowed(on: Boolean) {
         allowed = on
-        if (!on) running.values.forEach { it.cancel() }
+        if (!on) refuseRunning("it was turned off in DroidACP on the tablet")
     }
 
     /** The tablet was just put on hold: the running calls end refused, as later ones will. */
-    fun hold() {
-        running.values.forEach { it.cancel() }
+    fun hold() = refuseRunning(HELD)
+
+    /** Why calls are refused now, or null: the relay is off, or the tablet on hold. */
+    private fun refusal(): String? = when {
+        !allowed -> "it's turned off in DroidACP on the tablet"
+        held() -> HELD
+        else -> null
     }
+
+    /** Cancelled from here rather than by PlasmaLLM: the call is answered -33001 with [reason]. */
+    private class Refused(val reason: String) : CancellationException(reason)
+
+    // The reason goes with the cancel, so it holds even if the hold is lifted before the call ends.
+    private fun refuseRunning(reason: String) = running.values.forEach { it.cancel(Refused(reason)) }
 
     /**
      * One `mcp/message` request from PlasmaLLM: [params] holds `serverId`, `requestId`, MCP's
@@ -107,8 +118,7 @@ class TabletRelay(
      * TabDesk's MCP answer as it came. Throws [RpcException] for the ACP side's errors.
      */
     suspend fun call(params: JsonObject): JsonObject {
-        if (!allowed) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "it's turned off in DroidACP on the tablet")
-        if (held()) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, HELD)
+        refusal()?.let { throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, it) }
         if (params.str("serverId") != serverId) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "this device offers no tablet under that serverId")
         val requestId = params.str("requestId")
         val method = params.str("method")
@@ -134,20 +144,21 @@ class TabletRelay(
                 sent.cancel()
                 throw RpcException(RpcErrorCodes.INVALID_PARAMS, "requestId $requestId is already running")
             }
-            // Put on hold since the check above: hold() may have missed this call, as it wasn't listed yet.
-            if (held()) {
+            // Turned off or put on hold since the check above: refuseRunning() may have missed this
+            // call, as it wasn't listed yet.
+            refusal()?.let {
                 untrack(requestId, sent)
                 sent.cancel()
-                throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, HELD)
+                throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, it)
             }
             try {
                 sent.start()
                 sent.await()
             } catch (e: CancellationException) {
-                // The call was cancelled from here (setAllowed(false), hold()), not this request.
+                // Cancelled from here (setAllowed(false), hold()), not by PlasmaLLM cancelling this request.
                 if (sent.isCancelled && currentCoroutineContext().isActive) {
-                    if (!allowed) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "it was turned off in DroidACP on the tablet")
-                    if (held()) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, HELD)
+                    val reason = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<Refused>().firstOrNull()?.reason ?: refusal()
+                    if (reason != null) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, reason)
                 }
                 throw e
             } finally {
