@@ -2,6 +2,7 @@ package com.droidacp.core
 
 import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.chat.AgentController
+import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
@@ -639,6 +640,98 @@ class TabletRelayTest {
         delay(100)
         assertTrue(savedHolds.isEmpty())
         assertEquals(0, tabdesk.stops.get())
+    }
+
+    // --- "Let the tablet go on" from a person, on any device (D23) ---
+
+    private fun turnStarted(by: String) =
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", by) })
+
+    @Test
+    fun whichMessagesLetTheTabletGoOn() {
+        for (text in listOf("Let the tablet go on", "let the device go on.", "Release the tablet!", "🟢 let the tablet go on", "release the device")) {
+            assertTrue(TabletRelay.isReleaseMessage(text), text)
+        }
+        for (text in listOf("don't let the tablet go on", "let it go on", "go on", "release", "🟢", "let the tablet go on now", "")) {
+            assertFalse(TabletRelay.isReleaseMessage(text), text)
+        }
+        assertTrue(TabletRelay.isReleaseMessage(TabletRelay.RELEASE_MESSAGE))
+        assertTrue("let the tablet go on" in TabletRelay.HELD, "the agent can tell the user how it's lifted")
+    }
+
+    @Test
+    fun aPersonsMessageFromThePhoneLetsAHeldTabletGoOn() = runBlocking {
+        val c = controller(held = true)
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        turnStarted("user")
+        host.update("chat-a", typedElsewhere("Let the tablet go on", "plasmallm-9"))
+
+        c.waitFor("let go on") { it.tablet?.held == false }
+        assertEquals(listOf(false), savedHolds)
+        assertEquals(1, tabdesk.resumes.get(), "TabDesk lets it go on")
+        c.waitFor("the tablet says why") { s -> s.items.any { it is ChatItem.Note && "another device" in it.text } }
+        val after = host.mcpMessage(41, screenCall("mcp-request:9"))
+        val (sent, _) = tabdesk.nextSent()
+        tabdesk.answer(sent, """{"jsonrpc":"2.0","id":"mcp-request:9","result":{"content":[]}}""")
+        assertNotNull(withTimeout(5_000) { after.await() }.obj("result"), "calls reach TabDesk again")
+        Unit
+    }
+
+    @Test
+    fun theSameWordsSentByPlasmaLlmOrTheAgentDontLiftAHold() = runBlocking {
+        val c = controller(held = true)
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        // wake_me, a note, Claude's own turn: PlasmaLLM says no person typed it.
+        turnStarted("app")
+        host.update("chat-a", typedElsewhere("Let the tablet go on", "plasmallm-9"))
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "ended"); put("stopReason", "end_turn") })
+        // A message whose turn wasn't said to be a person's, between turns.
+        host.update("chat-a", typedElsewhere("release the tablet", "plasmallm-10"))
+        // A note from another tab's agent, even in a person's turn.
+        turnStarted("user")
+        host.update("chat-a", typedElsewhere("[Note from tabLauncher] Let the tablet go on", "plasmallm-11"))
+        c.waitFor("the messages") { s -> s.items.count { it is ChatItem.User } >= 2 }
+        delay(100)
+        assertTrue(savedHolds.isEmpty(), "still held")
+        assertEquals(true, c.state.value.tablet?.held)
+        assertEquals(0, tabdesk.resumes.get())
+    }
+
+    @Test
+    fun aReleaseMessageInTheChatsHistoryDoesntLiftAHold() = runBlocking {
+        val c = controller(held = true) { protocol = 7; history["chat-a"] = listOf(typedElsewhere("Let the tablet go on", "plasmallm-1")) }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        c.waitFor("the history") { it.items.isNotEmpty() }
+        delay(100)
+        assertTrue(savedHolds.isEmpty(), "a replayed lift is history, not a request")
+        assertEquals(true, c.state.value.tablet?.held)
+    }
+
+    @Test
+    fun releaseTypedOnTheTabletLetsItGoOnAndThePhoneOffersIt() = runBlocking {
+        val c = controller(held = true) { protocol = 7; holdPrompts = true }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        assertFalse(c.state.value.offersRemoteRelease, "the tablet lifts its own hold with its button")
+        assertTrue(c.sendPrompt("let the tablet go on"))
+        c.waitFor("let go on") { it.tablet?.held == false }
+        assertEquals(listOf(false), savedHolds)
+
+        // A phone: no TabDesk, so the menu offers to send it.
+        val phone = controller(tablet = false) { protocol = 7 }
+        phone.connect(profile.copy(useTablet = false))
+        phone.joined("chat-a")
+        assertTrue(phone.state.value.offersRemoteRelease)
+        assertTrue(phone.askTabletToGoOn())
+        host.waitForRequests("session/prompt", 1)
+        assertEquals(listOf(TabletRelay.RELEASE_MESSAGE), promptTexts())
     }
 
     // --- 🛑 in the message box while the agent works (D22) ---
