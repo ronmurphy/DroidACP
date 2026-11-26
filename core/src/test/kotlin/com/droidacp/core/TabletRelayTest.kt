@@ -715,8 +715,9 @@ class FakeTabDesk : TabletLink {
         val answer = CompletableDeferred<String>()
         waiting[id] = answer
         sentIds += id
-        sent.put(id to message)
+        // Active before the test can see the call, so a Stop it presses next isn't overwritten.
         status.value = status.value.copy(control = TabletStatus.ACTIVE, reason = "")
+        sent.put(id to message)
         try {
             return answer.await()
         } catch (e: CancellationException) {
