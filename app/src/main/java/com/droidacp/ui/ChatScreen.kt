@@ -6,7 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.droidacp.core.acp.ConfigOption
@@ -241,7 +243,7 @@ fun ChatScreen(
         bottomBar = {
             Column {
                 // The Pixel People: one per PlasmaLLM tab. Out of the way while typing.
-                if (!WindowInsets.isImeVisible) {
+                if (!keyboardTakesRoom()) {
                     PeopleStrip(state.stripPeople()) { person -> switchChat(person.sessionId) { actions.openChat(person.sessionId, person.cwd) } }
                 }
                 Composer(
@@ -614,3 +616,17 @@ private fun AuthPanel(state: ChatState, actions: ChatActions) {
         }
     }
 }
+
+/**
+ * Whether the on-screen keyboard takes room at the bottom, more than a hardware keyboard's
+ * small toolbar does. Not `WindowInsets.isImeVisible`: Lenovo's tablets say the keyboard is
+ * shown in their floating windows (and sometimes in landscape) with none on screen.
+ */
+@Composable
+private fun keyboardTakesRoom(): Boolean {
+    val density = LocalDensity.current
+    val keyboard = WindowInsets.ime.getBottom(density) - WindowInsets.navigationBars.getBottom(density)
+    return keyboard > with(density) { KEYBOARD_ROOM.roundToPx() }
+}
+
+private val KEYBOARD_ROOM = 100.dp
