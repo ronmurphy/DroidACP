@@ -364,6 +364,13 @@ reads only their envelope; TabDesk decides what's allowed.
   as a `user_message_chunk`, but not one replayed by `session/load` (`replaying`), nor a
   note from another tab's agent. It doesn't cancel the turn, which is usually the
   message's own. No message lifts a hold.
+- **🛑 in the message box** (plan D22). `ChatState.canHalt`: while a turn runs in a
+  PlasmaLLM chat whose `tabletTools` isn't off, on any device. `AgentController.halt()`
+  holds this tablet at once if it offers one (`holdIfAsked`), cancels the turn, then sends
+  `HALT_MESSAGE` (🛑) as soon as the chat is idle: PlasmaLLM refuses `session/prompt`
+  while a turn runs (`busy`), so a phone can only reach the tablet after the turn. The
+  tablet's DroidACP holds on that message by D21. `halting` hides the button meanwhile;
+  if the connection closes first, a note says the 🛑 wasn't sent.
 - **Approval elsewhere.** `_plasmallm/permission_elsewhere` marks a tool call as
   waiting for an answer on the phone or laptop (the tablet is the device being
   driven), until `permission_resolved`.
@@ -484,5 +491,7 @@ Roughly in order of value:
 | The PlasmaLLM companion | `core/.../acp/PlasmaLlm.kt`, the `plasma` parts of `AgentController.kt` (+ `PlasmaLlmTest`) |
 | Picking a transport per agent | `app/.../DroidAcpApp.kt` (`transportFactory`) |
 | The add/edit agent form | `app/.../ui/ProfilesScreen.kt`, `FolderPicker.kt` |
+| The message box, 🛑 and the context bar | `app/.../ui/Composer.kt` |
+| Pictures full screen, zoomable | `app/.../ui/ImageViewer.kt` |
 | Colours and typography | `app/.../ui/Theme.kt`, `app/src/main/res/values/colors.xml` |
 | The bridge | `bridge/acp-bridge.js`, `bridge/README.md` |

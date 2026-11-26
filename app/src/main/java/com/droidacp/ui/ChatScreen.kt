@@ -114,6 +114,9 @@ interface ChatActions {
     /** Let the agent use this tablet again after a hold (asked to confirm first). */
     fun releaseTablet()
 
+    /** 🛑 in the message box while the agent works: stop it, and put the tablet on hold (plan D22). */
+    fun halt()
+
     /** TabDesk → Customize → Agent, where DroidACP is approved. */
     fun openTabDesk()
 }
@@ -130,6 +133,8 @@ fun ChatScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var confirmRelease by remember { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    // Opened from the context bar: shown at "Context".
+    var settingsAtContext by rememberSaveable { mutableStateOf(false) }
     var chatsOpen by rememberSaveable { mutableStateOf(false) }
     fun openChats() {
         chatsOpen = true
@@ -177,7 +182,9 @@ fun ChatScreen(
                 },
                 actions = {
                     if (state.canChat) {
-                        IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Default.Settings, contentDescription = "Session settings") }
+                        IconButton(onClick = { settingsAtContext = false; settingsOpen = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Session settings")
+                        }
                     }
                     Box {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
@@ -215,6 +222,7 @@ fun ChatScreen(
                 draft = draft,
                 onSent = { scope.launch { follower.scrollToEnd() } },
                 onReleaseTablet = { confirmRelease = true },
+                onOpenContext = { settingsAtContext = true; settingsOpen = true },
             )
         },
     ) { padding ->
@@ -271,7 +279,7 @@ fun ChatScreen(
         val tool = state.items.lastOrNull { it is ChatItem.Tool && it.call.id == permission.toolCallId } as? ChatItem.Tool
         PermissionDialog(permission, tool?.call, onAnswer = { optionId -> actions.answerPermission(permission.requestId, optionId) })
     }
-    if (settingsOpen) SessionSettingsSheet(state, actions, onDismiss = { settingsOpen = false })
+    if (settingsOpen) SessionSettingsSheet(state, actions, atContext = settingsAtContext, onDismiss = { settingsOpen = false })
     if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = ::switchChat, onDismiss = { chatsOpen = false })
     // Under the stop question: answering it ("Keep working") brings this one back.
     val elsewhere = state.openElsewhere

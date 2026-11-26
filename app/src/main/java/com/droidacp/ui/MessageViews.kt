@@ -108,10 +108,12 @@ private fun AttachmentView(block: ContentBlock) {
     }
 }
 
+/** A picture in the chat, at most 320 dp high; tapped, it opens full screen to zoom in ([ImageViewer]). */
 @Composable
 fun AgentImage(image: ContentBlock.Image) {
     val decoder = LocalImageDecoder.current
     val bitmap = remember(image.data) { decoder.decode(image.data) }
+    var open by remember { mutableStateOf(false) }
     if (bitmap == null) {
         Text("🖼 image (${image.mimeType})", style = MaterialTheme.typography.bodySmall)
     } else {
@@ -121,8 +123,10 @@ fun AgentImage(image: ContentBlock.Image) {
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .heightIn(max = 320.dp)
-                .clip(RoundedCornerShape(10.dp)),
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClickLabel = "Open full screen to zoom in") { open = true },
         )
+        if (open) ImageViewer(bitmap, "Image", onDismiss = { open = false })
     }
 }
 

@@ -30,6 +30,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -40,9 +42,10 @@ import androidx.compose.ui.window.DialogProperties
 import com.droidacp.core.acp.ConfigOption
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.acp.ToolContent
-import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.PendingPermission
+import com.droidacp.core.chat.ProfileKind
+import kotlinx.coroutines.flow.first
 
 /**
  * The agent asks before doing something (editing a file, running a command...).
@@ -102,12 +105,23 @@ fun PermissionDialog(permission: PendingPermission, call: ToolCall?, onAnswer: (
 }
 
 @Composable
-fun SessionSettingsSheet(state: ChatState, actions: ChatActions, onDismiss: () -> Unit) {
+fun SessionSettingsSheet(
+    state: ChatState,
+    actions: ChatActions,
+    /** Opened from the context bar: scrolled to "Context", near the end. */
+    atContext: Boolean = false,
+    onDismiss: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        val scroll = rememberScrollState()
+        if (atContext) {
+            // Once there's somewhere to scroll; with a short list it all shows anyway.
+            LaunchedEffect(Unit) { scroll.animateScrollTo(snapshotFlow { scroll.maxValue }.first { it > 0 }) }
+        }
         Column(
             Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),

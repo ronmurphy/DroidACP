@@ -283,6 +283,8 @@ class MainActivity : ComponentActivity() {
 
                 override fun releaseTablet() = controller.releaseTablet()
 
+                override fun halt() = controller.halt()
+
                 override fun openTabDesk() {
                     TabDeskLink.openSettings(this@MainActivity)
                 }
