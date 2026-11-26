@@ -104,6 +104,12 @@ interface ChatActions {
     fun reconnect()
     fun disconnect()
     fun openLog()
+
+    /** The tablet bar's Stop: the turn, and the agent's use of this tablet until the next message. */
+    fun stopTablet()
+
+    /** TabDesk → Customize → Agent, where DroidACP is approved. */
+    fun openTabDesk()
 }
 
 @Composable
@@ -327,6 +333,7 @@ private fun subtitle(state: ChatState): String {
     val status = state.status
     return when {
         status is ConnectionStatus.Connecting -> "Connecting…"
+        status is ConnectionStatus.Failed && state.reconnecting -> "Disconnected; connecting again soon…"
         status is ConnectionStatus.Failed -> "Disconnected"
         status is ConnectionStatus.Disconnected -> "Not connected"
         state.cancelling -> "Stopping…"
@@ -360,7 +367,7 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                 is ChatItem.User -> UserBubble(item)
                 is ChatItem.Agent -> AgentMessage(item)
                 is ChatItem.Thought -> ThoughtView(item, live = state.busy && item === state.items.lastOrNull())
-                is ChatItem.Tool -> ToolCallCard(item.call)
+                is ChatItem.Tool -> ToolCallCard(item.call, waitingElsewhere = item.call.id in state.waitingElsewhere)
                 is ChatItem.Note -> NoteView(item)
             }
         }
@@ -372,6 +379,8 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                     Text(
                         when {
                             state.cancelling -> "Stopping…"
+                            // An action on this tablet, approved on the phone or the laptop.
+                            state.waitingElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop…"
                             // A prompt typed in PlasmaLLM's window or on another device.
                             state.remoteTurn -> "${state.agentName} is working on a message sent from another screen…"
                             else -> "${state.agentName} is working…"

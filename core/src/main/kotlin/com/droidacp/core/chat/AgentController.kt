@@ -3,6 +3,7 @@ package com.droidacp.core.chat
 import com.droidacp.core.acp.AcpClient
 import com.droidacp.core.acp.AcpClientHandler
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.core.acp.ConnectionRefusedException
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.OpenElsewhere
 import com.droidacp.core.acp.OpenElsewhereChoice
@@ -21,21 +22,27 @@ import com.droidacp.core.acp.plasmaSessionId
 import com.droidacp.core.rpc.ConnectionClosedException
 import com.droidacp.core.rpc.RpcErrorCodes
 import com.droidacp.core.rpc.RpcException
+import com.droidacp.core.tablet.Tablet
+import com.droidacp.core.tablet.TabletRelay
+import com.droidacp.core.tablet.TabletStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -72,10 +79,17 @@ fun interface TransportFactory {
  * Lives as long as the app process (not tied to a screen), so rotating the tablet
  * or leaving the chat screen doesn't drop the connection. All public methods are
  * safe to call from the main thread; they never block.
+ *
+ * [tablet]: this device's tablet (TabDesk), which a PlasmaLLM agent with
+ * [Profile.useTablet] on may use: see [TabletRelay]. Null where there's none to offer.
+ * While it's offered, a dropped connection is made again by itself, after each of
+ * [reconnectDelaysMs] in turn (the last one repeats).
  */
 class AgentController(
     private val appScope: CoroutineScope,
     private val clientVersion: String,
+    private val tablet: Tablet? = null,
+    private val reconnectDelaysMs: List<Long> = RECONNECT_DELAYS_MS,
     private val transports: TransportFactory,
 ) {
     private val _state = MutableStateFlow(ChatState())
@@ -91,6 +105,19 @@ class AgentController(
     private var link: Link? = null
     private val permissionWaiters = ConcurrentHashMap<Long, CompletableDeferred<PermissionOutcome>>()
     private val nextPermissionId = AtomicLong(1)
+
+    /** Numbers each connection, for TabDesk's Binder ids (`c3:mcp-request:7`). */
+    private val nextConnection = AtomicLong(1)
+
+    /** Connecting again by itself after a drop (the tablet's relay), and how many tries so far. */
+    @Volatile
+    private var retry: Job? = null
+
+    @Volatile
+    private var retries = 0
+
+    /** An edit of the connected agent, saved while connected: the next connection uses it, a reconnect too. */
+    private var savedWhileConnected: Profile? = null
 
     // ------------------------------------------------------------------
     // Connection lifecycle
@@ -113,12 +140,26 @@ class AgentController(
         startNew: Boolean = false,
         resumeCwd: String? = null,
     ) {
+        cancelRetry()
+        open(profile, resumeSessionId, keepTranscript, startNew, resumeCwd)
+    }
+
+    private fun open(
+        profile: Profile,
+        resumeSessionId: String?,
+        keepTranscript: Boolean = false,
+        startNew: Boolean = false,
+        resumeCwd: String? = null,
+    ) {
         val old = link
+        // This connection uses [profile]; an edit saved during the old one is in it (or superseded).
+        savedWhileConnected = null
         // When we keep our own transcript (reconnect), session/resume is enough; otherwise
         // prefer session/load so the agent replays the conversation for us.
         val newLink = Link(profile, resumeSessionId, resumeCwd?.trim()?.ifEmpty { null }, preferLoad = !keepTranscript, startNew = startNew)
         link = newLink // set first, so the old link's close callback knows it's no longer current
         old?.shutdown()
+        tablet?.link?.setWanted(profile.offersTablet)
         _state.update { old ->
             val base = if (keepTranscript && old.profile?.id == profile.id) old else ChatState(nextKey = old.nextKey)
             base.copy(
@@ -135,6 +176,9 @@ class AgentController(
                 pastSessionsError = null,
                 plasmaLlm = null,
                 sessionId = if (keepTranscript) base.sessionId else null,
+                tablet = tablet?.takeIf { profile.offersTablet }?.let { TabletUse(it.link.status.value) },
+                approvalElsewhere = emptySet(),
+                reconnecting = false,
             )
         }
         newLink.transport.connect()
@@ -148,13 +192,62 @@ class AgentController(
     }
 
     fun disconnect() {
-        val l = link ?: return
+        cancelRetry()
+        // Also while a reconnect was waiting, when there's no link but TabDesk is still bound.
+        tablet?.link?.setWanted(false)
+        val l = link
+        if (l == null) {
+            _state.update { if (it.tablet != null) it.copy(tablet = null) else it }
+            return
+        }
         link = null
         l.shutdown()
         cancelAllPermissions()
+        // An edit saved while connected counts from now on (Reconnect uses the state's profile).
+        val saved = savedWhileConnected
+        savedWhileConnected = null
         _state.update {
-            it.copy(status = ConnectionStatus.Disconnected, busy = false, remoteTurn = false, cancelling = false, startingSession = false, permissions = emptyList())
+            it.copy(
+                status = ConnectionStatus.Disconnected,
+                profile = saved?.takeIf { p -> p.id == it.profile?.id } ?: it.profile,
+                busy = false,
+                remoteTurn = false,
+                cancelling = false,
+                startingSession = false,
+                permissions = emptyList(),
+                tablet = null,
+                approvalElsewhere = emptySet(),
+            )
         }
+    }
+
+    /**
+     * "Let the agent use this tablet" changed for the agent in use. On, the tablet is
+     * offered to PlasmaLLM on the connection already open once TabDesk has approved (a
+     * `declareOnly` resume). Off, running calls end and later ones are refused (-33001):
+     * PlasmaLLM keeps a registration until the connection closes, so refusing is how it's
+     * withdrawn, without reconnecting.
+     */
+    fun setTabletAllowed(on: Boolean) {
+        val s = _state.value
+        val profile = s.profile ?: return
+        if (profile.useTablet == on) return
+        val updated = profile.copy(useTablet = on)
+        // Not connected, TabDesk waits for the next connection (open() binds it then).
+        val bind = updated.offersTablet && link != null
+        _state.update {
+            it.copy(
+                profile = updated,
+                tablet = tablet?.takeIf { bind }?.let { t -> it.tablet ?: TabletUse(t.link.status.value) },
+            )
+        }
+        // Off: the running calls end as refused (-33001) before TabDesk is let go of.
+        if (!updated.offersTablet) {
+            link?.tabletAllowed(false)
+            cancelRetry()
+        }
+        tablet?.link?.setWanted(bind)
+        if (bind) link?.tabletAllowed(true)
     }
 
     // ------------------------------------------------------------------
@@ -292,6 +385,55 @@ class AgentController(
         }
     }
 
+    /**
+     * The user saved [p]. If it's the agent in use, what can change while connected does:
+     * the tablet setting and quiet mode. The rest takes effect on the next connection,
+     * including a reconnect that's waiting.
+     */
+    fun profileSaved(p: Profile) {
+        if (_state.value.profile?.id != p.id) return
+        setTabletAllowed(p.useTablet)
+        if (link == null) {
+            _state.update { it.copy(profile = p) }
+        } else {
+            savedWhileConnected = p
+            _state.update { it.copy(profile = it.profile?.copy(quietHere = p.quietHere)) }
+        }
+    }
+
+    /**
+     * Stop in the tablet's bar: the agent's turn, if one is running in the chat shown, and
+     * the agent's use of the tablet either way, until the next message the user sends.
+     */
+    fun stopTablet() {
+        if (_state.value.busy) cancelTurn() else link?.stopTablet()
+    }
+
+    /** Wait, then connect again to the same agent and chat: the tablet should stay reachable. */
+    private fun scheduleReconnect(profile: Profile) {
+        val wait = reconnectDelaysMs[minOf(retries, reconnectDelaysMs.size - 1)]
+        retries++
+        _state.update { it.copy(reconnecting = true) }
+        retry = appScope.launch {
+            kotlinx.coroutines.delay(wait)
+            val s = _state.value
+            val current = s.profile
+            // Something else connected meanwhile, or the setting went off.
+            if (link != null || current?.id != profile.id || !current.offersTablet) {
+                _state.update { it.copy(reconnecting = false) }
+                return@launch
+            }
+            open(current, resumeSessionId = s.sessionId, keepTranscript = true, resumeCwd = s.sessionCwd)
+        }
+    }
+
+    private fun cancelRetry() {
+        retry?.cancel()
+        retry = null
+        retries = 0
+        _state.update { if (it.reconnecting) it.copy(reconnecting = false) else it }
+    }
+
     // ------------------------------------------------------------------
     // Prompt turns
     // ------------------------------------------------------------------
@@ -334,8 +476,10 @@ class AgentController(
             if (text.isNotBlank()) add(AcpClient.textBlock(text))
         }
         val shown = images.map { ContentBlock.Image(it.mimeType, it.base64, null) }
-        _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false) }
+        _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet()) }
         l.ownTurn = sessionId
+        // The user sent a message: the tablet may go on after a Stop.
+        l.userTurn()
 
         // Notes go to the chat the prompt was sent in; PlasmaLLM may have switched us to another by now.
         fun noteHere(text: String, severity: ChatItem.Severity = ChatItem.Severity.Info) =
@@ -371,7 +515,9 @@ class AgentController(
                 if (l.ownTurn == sessionId) l.ownTurn = null
                 // A turn started elsewhere may be running by now (after PlasmaLLM switched chats), or
                 // the user moved to another chat and started one there; leave those alone.
-                _state.update { if (it.remoteTurn || it.sessionId != sessionId) it else it.copy(busy = false, cancelling = false) }
+                _state.update {
+                    if (it.remoteTurn || it.sessionId != sessionId) it else it.copy(busy = false, cancelling = false, approvalElsewhere = emptySet())
+                }
             }
             // Only report turns that really ended (not ones cut off by a dropped connection, or
             // still running in a PlasmaLLM tab).
@@ -390,6 +536,8 @@ class AgentController(
         if (!s.busy) return
         // For a turn started elsewhere this works too: PlasmaLLM stops it, whoever sent it.
         l.client.cancel(sessionId)
+        // One Stop: the agent's use of this tablet stops too, until the next message.
+        l.stopTablet()
         cancelAllPermissions()
         _state.update { it.copy(cancelling = true, permissions = emptyList()) }
     }
@@ -467,6 +615,7 @@ class AgentController(
         busy = false,
         remoteTurn = false,
         cancelling = false,
+        approvalElsewhere = emptySet(),
     )
 
     private fun cancelAllPermissions() {
@@ -542,6 +691,21 @@ class AgentController(
         /** Permission requests waiting here, by tool call, so `_plasmallm/permission_resolved` can close them. */
         private val permissionTools = ConcurrentHashMap<Long, String>()
 
+        // --- This tablet, offered to PlasmaLLM (TabletRelay.kt) ---
+
+        /** For any PlasmaLLM agent on a device with TabDesk, so the setting can go on while connected. */
+        val relay: TabletRelay? = tablet?.takeIf { profile.isPlasmaLlm }?.let {
+            TabletRelay(it.link, it.serverId, "c${nextConnection.getAndIncrement()}", allowed = profile.useTablet)
+        }
+
+        /** A session was opened (or tried) on this connection, so later declarations need a resume of their own. */
+        @Volatile
+        private var opened = false
+
+        /** TabDesk's control state as last seen, to notice it changing to `stopped`. */
+        @Volatile
+        private var lastControl: String? = null
+
         fun shutdown() {
             transport.close()
         }
@@ -556,23 +720,41 @@ class AgentController(
 
         override fun onClosed(reason: String, error: Throwable?) {
             client.close(reason)
+            // Also cancels the tablet calls running, at TabDesk too.
             job.cancel()
             if (!isCurrent) return
             link = null
             cancelAllPermissions()
             val wasConnected = _state.value.isConnected
+            // An edit saved while connected counts from now on, for a reconnect too.
+            val current = savedWhileConnected?.takeIf { it.id == _state.value.profile?.id } ?: _state.value.profile
+            savedWhileConnected = null
+            // The tablet's relay needs the connection: make it again by itself, unless the other
+            // end refused it (a rejected token, an invalid address), which trying again won't change.
+            val again = current != null && current.id == profile.id && current.offersTablet && tablet != null &&
+                error !is ConnectionRefusedException
+            val wasRetrying = retries > 0
             _state.update {
                 it.copy(
                     status = ConnectionStatus.Failed(reason),
+                    profile = current ?: it.profile,
                     busy = false,
                     remoteTurn = false,
                     cancelling = false,
                     startingSession = false,
                     permissions = emptyList(),
                     openElsewhere = null,
+                    tablet = it.tablet?.copy(offered = false, declared = false, calls = 0),
+                    approvalElsewhere = emptySet(),
+                    // With the failure, so nothing sees the connection as over while a reconnect waits
+                    // (the foreground service would stop).
+                    reconnecting = again,
                 )
             }
-            if (wasConnected) _events.tryEmit(AgentEvent.ConnectionLost(_state.value.agentName, reason))
+            // A drop it recovers from by itself needs no alert (the ongoing notification says it's
+            // connecting again); one it gives up on does, also after reconnecting for a while.
+            if ((wasConnected || wasRetrying) && !again) _events.tryEmit(AgentEvent.ConnectionLost(_state.value.agentName, reason))
+            if (again) scheduleReconnect(current!!) else retries = 0
         }
 
         private suspend fun initialize() {
@@ -587,6 +769,8 @@ class AgentController(
                 val hello = init.plasmaLlm?.takeIf { companion && it.protocol >= 1 }
                 plasma = hello != null
                 host = hello?.chat?.takeIf { it.sessionId.isNotEmpty() }
+                relay?.offered = hello != null && hello.protocol >= PlasmaLlm.TABLET_PROTOCOL && init.capabilities.mcpOverAcp
+                watchTablet()
                 _state.update {
                     it.copy(
                         status = ConnectionStatus.Connected,
@@ -649,6 +833,9 @@ class AgentController(
          */
         suspend fun startSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null) {
             sessionLock.withLock { openSession(target, preferLoad, cwd, meta) }
+            publishTablet()
+            // TabDesk's approval may have come while it opened, too late for that request.
+            if (relay?.let { it.declarable && !it.declared } == true) declareAgain()
             if (needsFollow()) followHost()
         }
 
@@ -657,24 +844,26 @@ class AgentController(
             if (target != null) left.remove(target)
             val caps = _state.value.capabilities
             _state.update { it.copy(startingSession = true, authRequired = false) }
+            // The tablet goes with every new chat, load and resume while it may be offered.
+            val servers = relay?.mcpServers().orEmpty()
             try {
                 val setup: SessionSetup = when {
-                    target == null -> client.newSession(cwd)
+                    target == null -> client.newSession(cwd, servers)
                     // PlasmaLLM always takes session/load, whatever its agent says.
                     plasma || (caps.loadSession && (preferLoad || !caps.resumeSession)) -> {
                         // History is replayed as session/update notifications, so start clean.
                         // PlasmaLLM told us the open chat's title already; show it while it loads.
                         val title = host?.takeIf { plasma && it.sessionId == target }?.title
                         _state.update { it.copy(sessionId = target, sessionTitle = title ?: it.sessionTitle, replaying = true, items = emptyList()) }
-                        client.loadSession(target, cwd, meta)
+                        client.loadSession(target, cwd, meta, servers)
                     }
                     caps.resumeSession -> {
                         _state.update { it.copy(sessionId = target) }
-                        client.resumeSession(target, cwd, meta)
+                        client.resumeSession(target, cwd, meta, servers)
                     }
                     else -> {
                         _state.update { Transcript.addNote(resetSession(it, clearTranscript = false), "This agent can't continue old sessions, so a new one was started.") }
-                        client.newSession(cwd)
+                        client.newSession(cwd, servers)
                     }
                 }
                 if (plasma) {
@@ -683,6 +872,8 @@ class AgentController(
                     host = if (old?.sessionId == setup.sessionId) old else PlasmaChat(setup.sessionId, cwd.ifEmpty { old?.cwd ?: "" }, null, false)
                     followFailures = 0
                 }
+                // Connected and in a chat: the next drop waits the shortest time again.
+                retries = 0
                 _state.update {
                     it.copy(
                         sessionId = setup.sessionId,
@@ -729,7 +920,116 @@ class AgentController(
                     _state.update { Transcript.addNote(it, "Couldn't create a session: ${e.message}", ChatItem.Severity.Error) }
                 }
             } finally {
+                // PlasmaLLM takes a declaration whatever happens to the request it came with.
+                if (servers.isNotEmpty()) relay?.declared = true
+                opened = true
                 _state.update { it.copy(startingSession = false, replaying = false) }
+            }
+        }
+
+        /**
+         * Offer the tablet on this connection now, with a `session/resume` that only declares
+         * it (protocol 2): the setting went on, or TabDesk's approval came, after the chat
+         * opened. It names the chat of PlasmaLLM's latest state, and never opens another.
+         */
+        private suspend fun declareAgain() {
+            val r = relay ?: return
+            var other: String? = null
+            sessionLock.withLock {
+                if (!plasma || !opened || r.declared || !r.declarable) return@withLock
+                val chat = host ?: return@withLock
+                try {
+                    client.resumeSession(chat.sessionId, chat.cwd, PlasmaLlm.declareOnlyMeta(), r.mcpServers())
+                } catch (e: RpcException) {
+                    // It counts whatever the answer. not_open_chat: the laptop has another chat open
+                    // by now, which the phone follows as usual.
+                    if (e.plasmaReason == PlasmaLlm.Reason.NOT_OPEN_CHAT) other = e.plasmaSessionId
+                } catch (e: ConnectionClosedException) {
+                    // Gone meanwhile; the next connection declares it with its load.
+                    return
+                }
+                r.declared = true
+            }
+            publishTablet()
+            if (other != null) followHost(other) else if (needsFollow()) followHost()
+        }
+
+        /** The setting changed (see [AgentController.setTabletAllowed]). */
+        fun tabletAllowed(on: Boolean) {
+            val r = relay ?: return
+            r.setAllowed(on)
+            publishTablet()
+            if (on) startDeclaring()
+        }
+
+        /**
+         * Asks to declare again. TabDesk's state can change often while one runs: they run one
+         * at a time, and asks made meanwhile make one more run after it, never a missed one.
+         */
+        private val declareAsks = Channel<Unit>(Channel.CONFLATED)
+        private val declarer by lazy { scope.launch { for (ask in declareAsks) declareAgain() } }
+
+        private fun startDeclaring() {
+            declarer.start()
+            declareAsks.trySend(Unit)
+        }
+
+        /** DroidACP's Stop: the agent's use of the tablet stops too, until the user's next message. */
+        fun stopTablet() {
+            val r = relay ?: return
+            if (r.allowed && r.declared) tablet?.link?.stop()
+        }
+
+        /**
+         * A turn a person sent, here or elsewhere: the tablet may go on after a Stop or a pause.
+         * Never for one PlasmaLLM or the agent started by itself (`by: "app"`).
+         */
+        fun userTurn() {
+            val r = relay ?: return
+            if (r.allowed && r.declared) tablet?.link?.resume()
+        }
+
+        /** Follow TabDesk's state and the calls running, for the bar, Stop, and declaring. */
+        private fun watchTablet() {
+            val r = relay ?: return
+            val t = tablet ?: return
+            if (!r.offered) return
+            lastControl = t.link.status.value.control
+            scope.launch { combine(t.link.status, r.calls) { status, _ -> status }.collect { onTablet(it) } }
+        }
+
+        private fun onTablet(status: TabletStatus) {
+            val r = relay ?: return
+            if (!isCurrent) return
+            val before = lastControl
+            lastControl = status.control
+            // Stop on TabDesk's indicator stops the agent's turn too. (`caller` is our own Stop coming back.)
+            if (status.control == TabletStatus.STOPPED && before != TabletStatus.STOPPED && status.reason == TabletStatus.BY_TABDESK && r.allowed) {
+                stoppedOnTablet(r)
+            }
+            publishTablet()
+            if (r.declarable && !r.declared && opened) startDeclaring()
+        }
+
+        /**
+         * Stop was pressed on TabDesk: cancel the turn that used the tablet. PlasmaLLM cancels
+         * the turn of the chat it has in front, so only when that's the one the calls came from.
+         */
+        private fun stoppedOnTablet(r: TabletRelay) {
+            val s = _state.value
+            val shown = s.sessionId ?: return
+            if ((r.lastSessionId ?: shown) != shown || !s.busy) return
+            client.cancel(shown)
+            cancelAllPermissions()
+            _state.update { it.copy(cancelling = true, permissions = emptyList()) }
+        }
+
+        fun publishTablet() {
+            val r = relay ?: return
+            val t = tablet ?: return
+            if (!isCurrent) return
+            _state.update { s ->
+                s.copy(tablet = if (r.allowed) TabletUse(t.link.status.value, r.offered, r.declared, r.calls.value) else null)
             }
         }
 
@@ -807,24 +1107,39 @@ class AgentController(
         override fun onExtNotification(method: String, params: JsonObject) {
             if (!isCurrent || !plasma) return
             when (val event = PlasmaEvent.parse(method, params)) {
-                is PlasmaEvent.State -> onHostState(event.chat)
+                is PlasmaEvent.State -> onHostState(event.chat, event.tabletTools)
                 is PlasmaEvent.Turn -> onHostTurn(event)
                 is PlasmaEvent.PermissionResolved -> {
                     // Answered on the computer or another device (or dropped): close ours. Our
                     // "cancelled" reply is ignored by PlasmaLLM; it doesn't stop the turn.
                     permissionTools.filterValues { it == event.toolCallId }.keys.forEach { answerPermission(it, null) }
+                    _state.update { it.copy(approvalElsewhere = it.approvalElsewhere - event.toolCallId) }
+                }
+                is PlasmaEvent.PermissionElsewhere -> {
+                    // An action on this tablet, approved on the phone or the laptop instead.
+                    if (event.sessionId in left) return
+                    _state.update { s ->
+                        if (s.sessionId == null || s.sessionId == event.sessionId) s.copy(approvalElsewhere = s.approvalElsewhere + event.toolCallId) else s
+                    }
                 }
                 null -> {}
             }
         }
 
-        private fun onHostState(chat: PlasmaChat) {
+        // --- PlasmaLLM's requests ---
+
+        override suspend fun mcpMessage(params: JsonObject): JsonElement {
+            val r = relay?.takeIf { isCurrent && plasma } ?: throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "this device offers no tablet")
+            return r.call(params)
+        }
+
+        private fun onHostState(chat: PlasmaChat, tabletTools: Boolean?) {
             // An empty id means PlasmaLLM is switching chats; the next state names the new one.
             if (chat.sessionId.isEmpty()) return
             host = chat
             _state.update { s ->
                 s.copy(
-                    plasmaLlm = s.plasmaLlm?.copy(chat = chat),
+                    plasmaLlm = s.plasmaLlm?.copy(chat = chat, tabletTools = tabletTools ?: s.plasmaLlm.tabletTools),
                     sessionTitle = if (s.sessionId == chat.sessionId && chat.title != null) chat.title else s.sessionTitle,
                 )
             }
@@ -832,6 +1147,8 @@ class AgentController(
         }
 
         private fun onHostTurn(turn: PlasmaEvent.Turn) {
+            // Whichever chat it's in: a message a person sent lets the tablet go on after a Stop.
+            if (turn.byUser) userTurn()
             val s = _state.value
             // Only turns in the chat we show (or are opening). A turn "ended" for a chat the
             // computer just left is followed by a state for the new one.
@@ -851,14 +1168,14 @@ class AgentController(
                 // us now (it's answered "cancelled"), so the move isn't put down to a refusal.
                 leftRunning = turn.sessionId to s.sessionTitle
                 if (ownTurn == turn.sessionId) ownTurn = null
-                _state.update { it.copy(busy = false, remoteTurn = false, cancelling = false) }
+                _state.update { it.copy(busy = false, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet()) }
                 return
             }
             // Our own turn ends with the session/prompt answer instead.
             if (!s.remoteTurn) return
             val reason = turn.stopReason ?: "end_turn"
             _state.update { st ->
-                val ended = st.copy(busy = false, remoteTurn = false, cancelling = false)
+                val ended = st.copy(busy = false, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet())
                 Transcript.describeStopReason(reason)?.let { Transcript.addNote(ended, it) } ?: ended
             }
             val after = _state.value
@@ -909,6 +1226,9 @@ class AgentController(
 
         /** Give up following PlasmaLLM's chat after this many failed opens in a row (reconnecting resets it). */
         private const val MAX_FOLLOW_FAILURES = 3
+
+        /** The waits before connecting again by itself, growing; the last one repeats. */
+        val RECONNECT_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L, 30_000L, 60_000L, 120_000L, 300_000L)
 
         /** Convenience for tests and simple setups: bridge agents only. */
         fun create(scope: CoroutineScope, version: String = "dev"): AgentController {

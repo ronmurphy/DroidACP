@@ -100,7 +100,7 @@ class PlasmaLlmTest {
         c.connect(plasmaProfile, resumeSessionId = "old-phone-chat")
         val s = c.joined("chat-a")
 
-        assertEquals(1L, host.initParams?.obj("_meta")?.obj("plasmallm")?.long("protocol"))
+        assertEquals(PlasmaLlm.PROTOCOL.toLong(), host.initParams?.obj("_meta")?.obj("plasmallm")?.long("protocol"))
         val load = host.requests.single { it.first == "session/load" }.second
         assertEquals("chat-a", load.str("sessionId"))
         assertEquals("/home/me/project", load.str("cwd"), "loads with the chat's own folder")
@@ -712,6 +712,42 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     var open = "chat-a"
     private var openCwd = "/home/me/project"
 
+    /** The companion protocol this PlasmaLLM speaks; from 2 it takes a tablet. */
+    @Volatile
+    var protocol = 1
+
+    /** The laptop's "Let the agent use a connected tablet" (protocol 2). */
+    @Volatile
+    var tabletTools = true
+
+    /** Answers to requests this fake sent (mcp/message), by id. */
+    private val answers = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<JsonObject>>()
+
+    /** The companion said protocol 2 or later, and this PlasmaLLM speaks it: it may offer a tablet. */
+    private val takesTablet: Boolean
+        get() = protocol >= 2 && (initParams?.obj("_meta")?.obj("plasmallm")?.long("protocol") ?: 0) >= 2
+
+    /** Send PlasmaLLM's `mcp/message` (JSON-RPC id [id]); completes with the whole answer (result or error). */
+    fun mcpMessage(id: Long, params: JsonObject): kotlinx.coroutines.CompletableDeferred<JsonObject> {
+        val answer = kotlinx.coroutines.CompletableDeferred<JsonObject>()
+        answers[id.toString()] = answer
+        deliver(buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            put("method", "mcp/message")
+            put("params", params)
+        })
+        return answer
+    }
+
+    /** `$/cancel_request` for the request sent with JSON-RPC id [id]. */
+    fun cancelRequest(id: Long) = notify("\$/cancel_request", buildJsonObject { put("requestId", id) })
+
+    /** The `mcpServers` of each session/new, load and resume, in order. */
+    fun declarations(): List<Pair<String, kotlinx.serialization.json.JsonArray?>> =
+        requests.filter { it.first in listOf("session/new", "session/load", "session/resume") }
+            .map { it.first to (it.second["mcpServers"] as? kotlinx.serialization.json.JsonArray) }
+
     fun shutdownExecutor() = executor.shutdownNow()
 
     /** The params of the first [count] requests named [method], once that many have arrived. */
@@ -724,8 +760,26 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
         got.take(count).map { it.second }
     }
 
+    /** The connection fails instead of opening (the laptop asleep, say). */
+    @Volatile
+    var refuse = false
+
+    /** Answers `initialize`, then closes the connection on `session/load` (restarting, say). */
+    @Volatile
+    var closeOnLoad = false
+
+    /** The connection is refused for good (a rejected token), so trying again can't help. */
+    @Volatile
+    var refuseForGood = false
+
     override fun connect() {
-        executor.execute { listener.onOpen() }
+        executor.execute {
+            when {
+                refuseForGood -> listener.onClosed("rejected (HTTP 403)", com.droidacp.core.acp.ConnectionRefusedException("rejected (HTTP 403)"))
+                refuse -> listener.onClosed("refused", null)
+                else -> listener.onOpen()
+            }
+        }
     }
 
     override fun close() {
@@ -772,8 +826,9 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
         val method = msg.str("method")
         val id = msg["id"]
         if (method == null) {
-            // A reply to our permission request.
+            // A reply to our permission request, or to an mcp/message.
             if ((id as? JsonPrimitive)?.content == permissionId?.toString()) msg.obj("result")?.let { permissionReply.complete(it) }
+            (id as? JsonPrimitive)?.content?.let { answers.remove(it) }?.complete(msg)
             return
         }
         val params = msg.obj("params") ?: JsonObject(emptyMap())
@@ -787,13 +842,15 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
                     putJsonObject("agentCapabilities") {
                         put("loadSession", true)
                         putJsonObject("sessionCapabilities") { putJsonObject("list") {} }
+                        if (isPlasma && takesTablet) putJsonObject("mcpCapabilities") { put("acp", true) }
                     }
                     put("authMethods", buildJsonArray {})
                     if (isPlasma) {
                         putJsonObject("_meta") {
                             putJsonObject("plasmallm") {
-                                put("protocol", 1)
+                                put("protocol", protocol)
                                 put("version", "0.9")
+                                if (takesTablet) put("tabletTools", tabletTools)
                                 put("sessionId", open)
                                 put("cwd", openCwd)
                                 put("title", "Open chat")
@@ -805,6 +862,10 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
             }
             "session/load" -> {
                 val sessionId = params.str("sessionId") ?: ""
+                if (closeOnLoad) {
+                    close()
+                    return
+                }
                 if (sessionId in goneChats) {
                     error(id, RpcError(-32602, "That chat no longer exists", buildJsonObject {
                         putJsonObject("plasmallm") { put("reason", "not_found"); put("sessionId", sessionId) }
@@ -852,6 +913,17 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
                 if (runningTurn) notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", open); put("state", "started") })
                 state()
             }
+            "session/resume" -> {
+                // Only declaring the tablet: never opens another chat (protocol 2).
+                val declareOnly = params.obj("_meta")?.obj("plasmallm")?.get("declareOnly")?.toString() == "true"
+                if (declareOnly && params.str("sessionId") != open) {
+                    error(id, RpcError(-32602, "Plasma LLM has another chat open now.", buildJsonObject {
+                        putJsonObject("plasmallm") { put("reason", "not_open_chat"); put("sessionId", open) }
+                    }))
+                } else {
+                    reply(id, JsonObject(emptyMap()))
+                }
+            }
             "session/new" -> {
                 open = "new-${++newChats}"
                 reply(id, buildJsonObject { put("sessionId", open) })
@@ -873,10 +945,11 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
         }
     }
 
-    private fun state() = notify(PlasmaLlm.STATE, buildJsonObject {
+    fun state() = notify(PlasmaLlm.STATE, buildJsonObject {
         put("sessionId", open)
         put("cwd", openCwd)
         put("busy", runningTurn)
+        if (takesTablet) put("tabletTools", tabletTools)
     })
 
     private fun reply(id: JsonElement?, result: JsonObject) = deliver(buildJsonObject {

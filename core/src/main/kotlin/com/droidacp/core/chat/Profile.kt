@@ -1,5 +1,6 @@
 package com.droidacp.core.chat
 
+import com.droidacp.core.rpc.bool
 import com.droidacp.core.rpc.str
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -45,6 +46,10 @@ enum class ProfileKind(val id: String) {
  *               it's optional: empty means "whatever folder PlasmaLLM has open".
  * @param repoUrl   Cloud agents: a GitHub repository to clone into the container (optional).
  * @param repoToken Cloud agents: a GitHub access token for that repository.
+ * @param useTablet PlasmaLLM agents: "Let the agent use this tablet (through TabDesk)".
+ *                  Off by default; it does nothing unless TabDesk is installed.
+ * @param quietHere PlasmaLLM agents using this tablet: no "finished", permission or problem
+ *                  notifications from this agent on this device (the phone has them).
  */
 data class Profile(
     val id: String = UUID.randomUUID().toString(),
@@ -56,10 +61,15 @@ data class Profile(
     val cwd: String,
     val repoUrl: String = "",
     val repoToken: String = "",
+    val useTablet: Boolean = false,
+    val quietHere: Boolean = false,
 ) {
     val isLocal: Boolean get() = kind == ProfileKind.Local
     val isCloud: Boolean get() = kind == ProfileKind.Cloud
     val isPlasmaLlm: Boolean get() = kind == ProfileKind.PlasmaLlm
+
+    /** This device offers its tablet to the agent: a PlasmaLLM agent with [useTablet] on. */
+    val offersTablet: Boolean get() = isPlasmaLlm && useTablet
 
     /** The WebSocket address to connect to (bridge and PlasmaLLM agents). */
     val connectUrl: String get() = if (isPlasmaLlm) com.droidacp.core.acp.PlasmaLlm.url(url) else url
@@ -83,6 +93,8 @@ data class Profile(
         put("cwd", cwd)
         put("repoUrl", repoUrl)
         put("repoToken", repoToken)
+        if (useTablet) put("useTablet", true)
+        if (quietHere) put("quietHere", true)
     }
 
     /** Problems that would stop a connection from working, for the edit form. */
@@ -145,6 +157,8 @@ data class Profile(
                 cwd = o.str("cwd") ?: "/",
                 repoUrl = o.str("repoUrl") ?: "",
                 repoToken = o.str("repoToken") ?: "",
+                useTablet = o.bool("useTablet") ?: false,
+                quietHere = o.bool("quietHere") ?: false,
             )
         }
 

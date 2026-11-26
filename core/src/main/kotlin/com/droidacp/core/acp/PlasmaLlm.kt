@@ -23,8 +23,15 @@ import kotlinx.serialization.json.putJsonObject
  * it isn't PlasmaLLM, and DroidACP talks plain ACP.
  */
 object PlasmaLlm {
-    /** The companion protocol version DroidACP speaks. */
-    const val PROTOCOL = 1
+    /**
+     * The companion protocol version DroidACP speaks: the highest whose additions it
+     * understands. From 2, PlasmaLLM lets it offer this tablet's tools (see [TABLET_UNAVAILABLE]);
+     * 3 to 7 added only things PlasmaLLM sends every client, which DroidACP handles.
+     */
+    const val PROTOCOL = 7
+
+    /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
+    const val TABLET_PROTOCOL = 2
 
     /** PlasmaLLM's phone access listens here unless the user changed it (the bridge uses 8765). */
     const val DEFAULT_PORT = 8766
@@ -32,6 +39,22 @@ object PlasmaLlm {
     const val STATE = "_plasmallm/state"
     const val TURN = "_plasmallm/turn"
     const val PERMISSION_RESOLVED = "_plasmallm/permission_resolved"
+
+    /** A permission request for a tablet action this device offered, asked on the others instead (protocol 2). */
+    const val PERMISSION_ELSEWHERE = "_plasmallm/permission_elsewhere"
+
+    /** PlasmaLLM's request carrying one MCP message for the tablet this device offered (protocol 2). */
+    const val MCP_MESSAGE = "mcp/message"
+
+    /**
+     * An `mcp/message` error: the tablet isn't reachable (TabDesk isn't installed, connected
+     * or compatible, the relay is off on this device, or another serverId). PlasmaLLM tells
+     * the agent "The tablet isn't available right now: " and the message.
+     */
+    const val TABLET_UNAVAILABLE = -33001
+
+    /** An `mcp/message` error: the call failed on the way, without an MCP answer. */
+    const val TABLET_FAILED = -33002
 
     /** Why PlasmaLLM refused a request: `error.data.plasmallm.reason`. */
     object Reason {
@@ -122,6 +145,14 @@ object PlasmaLlm {
      */
     fun isAgentNote(text: String): Boolean = text.startsWith("[Note from ") || text.startsWith("[Notes from ")
 
+    /**
+     * The `_meta` of a `session/resume` that only declares the tablet on a connection already
+     * open (protocol 2): no history, and PlasmaLLM never opens another chat for it.
+     */
+    fun declareOnlyMeta(): JsonObject = buildJsonObject {
+        putJsonObject("plasmallm") { put("declareOnly", true) }
+    }
+
     /** The `_meta` of a load retried after [Reason.OPEN_ELSEWHERE]: what to do about the other Claude. */
     fun openElsewhereMeta(choice: String): JsonObject = buildJsonObject {
         putJsonObject("plasmallm") { put("openElsewhere", choice) }
@@ -202,38 +233,61 @@ data class PlasmaChat(val sessionId: String, val cwd: String, val title: String?
     }
 }
 
-/** What PlasmaLLM says about itself in its `initialize` result (`_meta.plasmallm`). */
-data class PlasmaHello(val protocol: Int, val version: String?, val chat: PlasmaChat) {
+/**
+ * What PlasmaLLM says about itself in its `initialize` result (`_meta.plasmallm`).
+ * [tabletTools]: the laptop's setting "Let the agent use a connected tablet" (protocol 2;
+ * kept up to date from `_plasmallm/state`), null when it didn't say.
+ */
+data class PlasmaHello(val protocol: Int, val version: String?, val chat: PlasmaChat, val tabletTools: Boolean? = null) {
     companion object {
         /** Null when the other end isn't PlasmaLLM (no `_meta.plasmallm.protocol`). */
         fun parse(meta: JsonObject?): PlasmaHello? {
             val p = meta?.obj("plasmallm") ?: return null
             val protocol = p.long("protocol")?.toInt() ?: return null
-            return PlasmaHello(protocol, p.str("version"), PlasmaChat.parse(p))
+            return PlasmaHello(protocol, p.str("version"), PlasmaChat.parse(p), p.bool("tabletTools"))
         }
     }
 }
 
 /** A `_plasmallm/...` notification. */
 sealed interface PlasmaEvent {
-    /** PlasmaLLM's chat, folder, title or busy state changed. `sessionId` is empty for a moment while it switches. */
-    data class State(val chat: PlasmaChat) : PlasmaEvent
+    /**
+     * PlasmaLLM's chat, folder, title, busy state or tablet setting changed. `sessionId` is
+     * empty for a moment while it switches. [tabletTools]: as in [PlasmaHello].
+     */
+    data class State(val chat: PlasmaChat, val tabletTools: Boolean? = null) : PlasmaEvent
 
     /**
      * A turn started or ended in [sessionId], whoever sent the prompt. [stillRunning]: it
      * "ended" (`cancelled`) only for devices, because another tab came to the front; it goes
-     * on in its tab (protocol 4).
+     * on in its tab (protocol 4). [by], when started: `user` (a person typed it, on the laptop
+     * or a device) or `app` (PlasmaLLM or Claude started it by itself); null if not said.
      */
-    data class Turn(val sessionId: String, val started: Boolean, val stopReason: String?, val stillRunning: Boolean = false) : PlasmaEvent
+    data class Turn(
+        val sessionId: String,
+        val started: Boolean,
+        val stopReason: String?,
+        val stillRunning: Boolean = false,
+        val by: String? = null,
+    ) : PlasmaEvent {
+        /** A person sent it, so the tablet may go on after a Stop. */
+        val byUser: Boolean get() = started && by == "user"
+    }
 
     /** A permission request this device was asked was answered elsewhere, or dropped. */
     data class PermissionResolved(val sessionId: String, val toolCallId: String) : PlasmaEvent
 
+    /**
+     * A permission request for an action on this tablet goes to the laptop and the other
+     * devices instead (protocol 2; [reason] `driven_device`). [PermissionResolved] follows.
+     */
+    data class PermissionElsewhere(val sessionId: String, val toolCallId: String, val reason: String?) : PlasmaEvent
+
     companion object {
         fun parse(method: String, params: JsonObject): PlasmaEvent? = when (method) {
-            PlasmaLlm.STATE -> State(PlasmaChat.parse(params))
+            PlasmaLlm.STATE -> State(PlasmaChat.parse(params), params.bool("tabletTools"))
             PlasmaLlm.TURN -> when (params.str("state")) {
-                "started" -> Turn(params.str("sessionId") ?: "", started = true, stopReason = null)
+                "started" -> Turn(params.str("sessionId") ?: "", started = true, stopReason = null, by = params.str("by"))
                 "ended" -> Turn(
                     params.str("sessionId") ?: "",
                     started = false,
@@ -245,6 +299,10 @@ sealed interface PlasmaEvent {
             PlasmaLlm.PERMISSION_RESOLVED -> {
                 val toolCallId = params.str("toolCallId")
                 if (toolCallId.isNullOrEmpty()) null else PermissionResolved(params.str("sessionId") ?: "", toolCallId)
+            }
+            PlasmaLlm.PERMISSION_ELSEWHERE -> {
+                val toolCallId = params.str("toolCallId")
+                if (toolCallId.isNullOrEmpty()) null else PermissionElsewhere(params.str("sessionId") ?: "", toolCallId, params.str("reason"))
             }
             else -> null
         }

@@ -181,8 +181,35 @@ Then:
 DroidACP says it's a companion when it connects, and uses PlasmaLLM's extensions only
 when PlasmaLLM answers in kind; anything else on that port is treated as a plain ACP
 agent. The protocol is described in PlasmaLLM's `docs/companion-protocol.md`
-(version 1); DroidACP's side is `core/.../acp/PlasmaLlm.kt`. The bridge stays: use it for
-computers without PlasmaLLM.
+(DroidACP speaks version 7); DroidACP's side is `core/.../acp/PlasmaLlm.kt`. The bridge
+stays: use it for computers without PlasmaLLM.
+
+### Letting PlasmaLLM's agent use this tablet (TabDesk)
+
+On a tablet with [TabDesk](https://github.com/ronmurphy/tabLauncher) installed, a
+PlasmaLLM agent's form has **Let the agent use this tablet (through TabDesk)**. With it
+on, the agent in PlasmaLLM's chat gets TabDesk's tools for this tablet: for now, the apps
+you let it use and which one is in front, and how busy the tablet is (CPU, memory,
+battery, each running app's share). DroidACP
+only passes the calls on; TabDesk decides what's allowed, and asks you once to approve
+DroidACP (TabDesk → Customize → Agent). PlasmaLLM has its own switch for it, "Let the
+agent use a connected tablet", and Claude Code fixes a chat's tools when the chat
+starts, so the tablet works in chats started after both are on.
+
+- **A bar over the message box** says when the agent is using the tablet, with
+  **Stop**, and what keeps it from working otherwise (TabDesk not approved yet, agents
+  switched off there, an older PlasmaLLM). Stop here, or on TabDesk's own notification,
+  also stops the turn; the agent can use the tablet again after your next message.
+- **Quiet on this device**: no "finished", permission or problem notifications from
+  this agent on the tablet, when your phone already has them.
+- A permission the agent asks for while it's using the tablet is answered on your
+  phone or laptop, not on the tablet; the tool card says so while it waits.
+- An agent that uses the tablet connects again by itself after the connection drops.
+  Turning the setting on offers to let DroidACP stay connected in the background.
+
+The calls follow the companion protocol's tablet extension (version 2 of it), and
+TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
+`core/.../tablet/TabletRelay.kt` and `app/.../tablet/TabDeskLink.kt`.
 
 ## What it does
 

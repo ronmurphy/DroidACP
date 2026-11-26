@@ -10,6 +10,12 @@ interface TransportListener {
 }
 
 /**
+ * The `error` of [TransportListener.onClosed] when trying again can't help: the other end
+ * refused us (HTTP 4xx, such as a rejected token), or the address isn't valid.
+ */
+class ConnectionRefusedException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/**
  * A two-way pipe that carries JSON-RPC messages, one whole message per call.
  *
  * ACP doesn't care how the messages travel. DroidACP has two transports:

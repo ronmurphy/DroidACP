@@ -78,6 +78,7 @@ import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
+import com.droidacp.core.chat.TabletUse
 import com.droidacp.data.StorageAccess
 import java.util.UUID
 
@@ -347,6 +348,17 @@ fun ProfileEditScreen(
     onSave: (Profile) -> Unit,
     onDelete: (Profile) -> Unit,
     onBack: () -> Unit,
+    /** TabDesk is installed here, so a PlasmaLLM agent may be let use this tablet. */
+    tabDeskInstalled: Boolean = false,
+    /** The tablet as the connection sees it, when [initial] is the agent connected now. */
+    tablet: TabletUse? = null,
+    /** [initial] is the agent connected now, whether or not it uses the tablet yet. */
+    connectedHere: Boolean = false,
+    /** The laptop's own tablet setting, when connected. */
+    laptopAllowsTablet: Boolean? = null,
+    onOpenTabDesk: () -> Unit = {},
+    /** The tablet setting went on: ask Android to let DroidACP stay connected in the background. */
+    onTabletTurnedOn: () -> Unit = {},
 ) {
     val context = LocalContext.current
     // A copy gets its own id (kept across rotation) and name; the agent it came from isn't touched.
@@ -381,6 +393,8 @@ fun ProfileEditScreen(
     var browsing by remember { mutableStateOf(false) }
     var repoUrl by rememberSaveable { mutableStateOf(initial?.repoUrl ?: "") }
     var repoToken by rememberSaveable { mutableStateOf(initial?.repoToken ?: "") }
+    var useTablet by rememberSaveable { mutableStateOf(initial?.useTablet ?: false) }
+    var quietHere by rememberSaveable { mutableStateOf(initial?.quietHere ?: false) }
     var showSecret by rememberSaveable { mutableStateOf(false) }
     var triedSave by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -411,6 +425,8 @@ fun ProfileEditScreen(
         ProfileKind.PlasmaLlm -> base.copy(
             name = name.trim(), kind = kind, url = host.trim(), token = "", apiKey = "",
             cwd = plasmaCwd.trim(), repoUrl = "", repoToken = "",
+            // Kept off where TabDesk isn't, so the setting never hides on.
+            useTablet = useTablet && tabDeskInstalled, quietHere = quietHere && useTablet && tabDeskInstalled,
         )
     }
     val problems = draft.validate()
@@ -602,6 +618,21 @@ fun ProfileEditScreen(
                         Text(if (host.isNotBlank()) "Browse the computer's folders…" else "Browse (enter the name first)")
                     }
                     PlasmaSetupCard()
+                    if (tabDeskInstalled) {
+                        TabletSettings(
+                            useTablet = useTablet,
+                            onUseTablet = { on ->
+                                useTablet = on
+                                if (on) onTabletTurnedOn()
+                            },
+                            quietHere = quietHere,
+                            onQuietHere = { quietHere = it },
+                            tablet = tablet,
+                            connectedHere = connectedHere,
+                            laptopAllows = laptopAllowsTablet,
+                            onOpenTabDesk = onOpenTabDesk,
+                        )
+                    }
                 }
                 if (triedSave) {
                     for (problem in problems) Text("• $problem", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)

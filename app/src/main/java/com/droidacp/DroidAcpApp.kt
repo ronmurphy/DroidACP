@@ -12,6 +12,7 @@ import com.droidacp.core.agent.LocalTransport
 import com.droidacp.core.chat.AgentController
 import com.droidacp.core.cloud.CloudAgentConfig
 import com.droidacp.core.cloud.CloudTransport
+import com.droidacp.core.tablet.Tablet
 import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ProfileKind
@@ -21,6 +22,7 @@ import com.droidacp.data.FolderHistory
 import com.droidacp.data.ProfileStore
 import com.droidacp.service.AgentService
 import com.droidacp.service.Notifications
+import com.droidacp.tablet.TabDeskLink
 import com.droidacp.widget.AgentWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +53,13 @@ class DroidAcpApp : Application() {
     lateinit var bookmarks: BookmarkStore
         private set
 
+    /**
+     * TabDesk's agent service on this device, through which PlasmaLLM's agent may use the
+     * tablet (only for an agent with "Let the agent use this tablet" on).
+     */
+    lateinit var tabDesk: TabDeskLink
+        private set
+
     /** Asks a bridge which folders its computer has, for the folder picker. */
     val bridgeFolders by lazy { BridgeFolders(WebSocketTransport.defaultClient()) }
 
@@ -65,7 +74,13 @@ class DroidAcpApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        controller = AgentController(appScope, BuildConfig.VERSION_NAME, transportFactory())
+        tabDesk = TabDeskLink(this)
+        controller = AgentController(
+            appScope,
+            BuildConfig.VERSION_NAME,
+            tablet = Tablet(tabDesk, TabDeskLink.serverId(this)),
+            transports = transportFactory(),
+        )
         profiles = ProfileStore(this)
         folders = FolderHistory(this)
         bookmarks = BookmarkStore(this)
@@ -115,7 +130,8 @@ class DroidAcpApp : Application() {
         // Run the foreground service exactly while we're connecting or connected.
         appScope.launch {
             controller.state
-                .map { it.status == ConnectionStatus.Connecting || it.status == ConnectionStatus.Connected }
+                // Also while waiting to connect again by itself (the tablet's relay).
+                .map { it.status == ConnectionStatus.Connecting || it.status == ConnectionStatus.Connected || it.reconnecting }
                 .distinctUntilChanged()
                 .collect { live -> if (live) AgentService.start(this@DroidAcpApp) else AgentService.stop(this@DroidAcpApp) }
         }
@@ -157,6 +173,8 @@ class DroidAcpApp : Application() {
         appScope.launch {
             controller.events.collect { event ->
                 if (isInForeground) return@collect
+                // Quiet on this device: the phone has this agent's notifications.
+                if (controller.state.value.profile?.let { it.offersTablet && it.quietHere } == true) return@collect
                 when (event) {
                     is AgentEvent.TurnFinished -> {
                         // Offer Reply when the chat it finished in is still open and ready for a message.

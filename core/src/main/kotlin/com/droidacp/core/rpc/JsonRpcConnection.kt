@@ -3,6 +3,9 @@ package com.droidacp.core.rpc
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -34,6 +37,10 @@ object RpcErrorCodes {
     const val RESOURCE_NOT_FOUND = -32002
 }
 
+/** The notification that cancels a request sent earlier: `{"requestId": <its id>}`. */
+const val CANCEL_REQUEST = "\$/cancel_request"
+
+
 /**
  * A symmetric JSON-RPC 2.0 peer.
  *
@@ -48,6 +55,10 @@ object RpcErrorCodes {
  * - [receive] must be called with every incoming message. Responses complete the
  *   waiting [request]; requests are passed to [onRequest] and its result (or
  *   thrown [RpcException]) is sent back; notifications go to [onNotification].
+ * - `$/cancel_request` (`{requestId}`, the JSON-RPC id of a request the other side sent
+ *   us) is answered here: that request gets error -32800 at once, its handler is
+ *   cancelled, and whatever it would have answered later is dropped. PlasmaLLM sends it
+ *   for a tablet call that's stopped or timed out.
  *
  * Notifications are delivered synchronously, in order, on the caller's thread. This
  * matters for ACP: the stream of `session/update` notifications must be applied in
@@ -62,6 +73,9 @@ class JsonRpcConnection(
 ) {
     private val nextId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+
+    /** Requests from the other side still being handled, by their id as JSON text (`41`, `"abc"`). */
+    private val incoming = ConcurrentHashMap<String, Job>()
 
     @Volatile
     private var closedReason: String? = null
@@ -126,6 +140,14 @@ class JsonRpcConnection(
         waiting.forEach { it.completeExceptionally(ConnectionClosedException(reason)) }
     }
 
+    /** The other side cancelled its request [requestId]: answer it -32800 now, and stop handling it. */
+    private fun cancelIncoming(requestId: JsonElement?) {
+        if (requestId == null || requestId is JsonNull) return
+        val job = incoming.remove(requestId.toString()) ?: return // finished already, or never ours
+        write(errorMessage(requestId, RpcErrorCodes.REQUEST_CANCELLED, "Request cancelled", null))
+        job.cancel()
+    }
+
     private fun parseOrNull(text: String): JsonElement? = try {
         Json.parseToJsonElement(text)
     } catch (e: SerializationException) {
@@ -148,6 +170,10 @@ class JsonRpcConnection(
 
         when {
             method != null && !hasId -> {
+                if (method == CANCEL_REQUEST) {
+                    cancelIncoming((message["params"] as? JsonObject)?.get("requestId"))
+                    return
+                }
                 try {
                     onNotification(method, message["params"])
                 } catch (e: Exception) {
@@ -157,7 +183,13 @@ class JsonRpcConnection(
 
             method != null -> {
                 val requestId: JsonElement = id ?: JsonNull
-                scope.launch {
+                val key = requestId.toString()
+                // Listed for cancelling, unless another request with this id is still running (the
+                // other side's mistake): then it's answered as before, but a cancel only finds the first.
+                var listed = false
+                // Started once it's listed, so a cancel can always find it.
+                val job = scope.launch(start = CoroutineStart.LAZY) {
+                    val self = coroutineContext.job
                     val reply = try {
                         val result = onRequest(method, message["params"])
                         buildJsonObject {
@@ -168,14 +200,20 @@ class JsonRpcConnection(
                     } catch (e: RpcException) {
                         errorMessage(requestId, e.code, e.message ?: "Error", e.data)
                     } catch (e: CancellationException) {
-                        // Our side is shutting down; tell the agent the request was cancelled.
-                        write(errorMessage(requestId, RpcErrorCodes.REQUEST_CANCELLED, "Request cancelled", null))
+                        // Our side is shutting down; tell the agent the request was cancelled
+                        // (unless a cancel from the other side already answered it).
+                        if (!listed || incoming.remove(key, self)) {
+                            write(errorMessage(requestId, RpcErrorCodes.REQUEST_CANCELLED, "Request cancelled", null))
+                        }
                         throw e
                     } catch (e: Exception) {
                         errorMessage(requestId, RpcErrorCodes.INTERNAL_ERROR, e.message ?: e.toString(), null)
                     }
-                    write(reply)
+                    // Answered already if it was cancelled meanwhile.
+                    if (!listed || incoming.remove(key, self)) write(reply)
                 }
+                listed = incoming.putIfAbsent(key, job) == null
+                job.start()
             }
 
             hasId -> {

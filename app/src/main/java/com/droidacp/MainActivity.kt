@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -25,6 +27,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.tablet.TabDeskLink
 import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.chat.ChatBookmark
 import com.droidacp.core.chat.ConnectionStatus
@@ -121,6 +124,20 @@ class MainActivity : ComponentActivity() {
         app.profiles.lastProfileId = profile.id
         val cwd = if (resume != null) app.profiles.lastSessionCwd(profile.id) else null
         app.controller.connect(profile, resumeSessionId = resume, startNew = startNew, resumeCwd = cwd)
+    }
+
+    /**
+     * The tablet's relay has to stay connected with the screen off: ask, with Android's own
+     * dialog, to leave DroidACP out of battery optimisation (once; nothing if it already is).
+     */
+    private fun askToStayConnected() {
+        val power = getSystemService(PowerManager::class.java) ?: return
+        if (power.isIgnoringBatteryOptimizations(packageName)) return
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (e: ActivityNotFoundException) {
+            // This maker's Android has no such dialog; TabDesk's setup explains the maker's own steps.
+        }
     }
 
     /** Folders are remembered per kind of machine: PlasmaLLM runs on the same kind of computer as a bridge. */
@@ -259,6 +276,12 @@ class MainActivity : ComponentActivity() {
                 override fun draftUsed() {
                     draft.value = null
                 }
+
+                override fun stopTablet() = controller.stopTablet()
+
+                override fun openTabDesk() {
+                    TabDeskLink.openSettings(this@MainActivity)
+                }
             }
         }
 
@@ -342,6 +365,13 @@ class MainActivity : ComponentActivity() {
                 },
                 onForgetFolder = { kind, path -> app.folders.forget(if (kind == ProfileKind.PlasmaLlm) ProfileKind.Bridge else kind, path) },
                 bridgeFolders = app.bridgeFolders,
+                // Asked once per visit, not on every change of the state while the form is open.
+                tabDeskInstalled = remember(editingId) { TabDeskLink.isInstalled(this@MainActivity) },
+                tablet = state.tablet?.takeIf { !copying && editingId != null && state.profile?.id == editingId },
+                connectedHere = !copying && editingId != null && state.profile?.id == editingId && state.isConnected,
+                laptopAllowsTablet = state.plasmaLlm?.tabletTools?.takeIf { !copying && state.profile?.id == editingId },
+                onOpenTabDesk = { TabDeskLink.openSettings(this@MainActivity) },
+                onTabletTurnedOn = ::askToStayConnected,
                 onSave = { p ->
                     when {
                         p.kind == ProfileKind.Cloud -> {}
@@ -349,6 +379,8 @@ class MainActivity : ComponentActivity() {
                         else -> app.folders.remember(p.kind, p.cwd)
                     }
                     app.profiles.save(p)
+                    // The agent in use takes its tablet and quiet settings at once.
+                    controller.profileSaved(p)
                     screen = Screen.Profiles
                 },
                 onDelete = { p ->
