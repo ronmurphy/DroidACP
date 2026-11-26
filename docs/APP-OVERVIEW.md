@@ -358,6 +358,12 @@ reads only their envelope; TabDesk decides what's allowed.
   hold lifted at once still answers the cancelled call -33001. The tablet
   stays declared meanwhile, so lifting it works in the same chat; TabDesk's own
   Continue doesn't lift DroidACP's hold.
+- **🛑 by message** (plan D21). A user message that `TabletRelay.isHoldMessage` (starts
+  with 🛑, or is just "stop/hold the tablet/device") holds the tablet on the device that
+  offers it: typed here (`sendPrompt`, before `userTurn()`), or typed elsewhere and seen
+  as a `user_message_chunk`, but not one replayed by `session/load` (`replaying`), nor a
+  note from another tab's agent. It doesn't cancel the turn, which is usually the
+  message's own. No message lifts a hold.
 - **Approval elsewhere.** `_plasmallm/permission_elsewhere` marks a tool call as
   waiting for an answer on the phone or laptop (the tablet is the device being
   driven), until `permission_resolved`.

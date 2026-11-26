@@ -11,6 +11,7 @@ import com.droidacp.core.rpc.obj
 import com.droidacp.core.rpc.str
 import com.droidacp.core.tablet.Tablet
 import com.droidacp.core.tablet.TabletLink
+import com.droidacp.core.tablet.TabletRelay
 import com.droidacp.core.tablet.TabletStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -561,6 +562,81 @@ class TabletRelayTest {
         c.releaseTablet()
         assertEquals(listOf(true, false), savedHolds)
         assertEquals(1, tabdesk.resumes.get())
+    }
+
+    // --- 🛑 by message, from any device (D21) ---
+
+    private fun typedElsewhere(text: String, messageId: String) = buildJsonObject {
+        put("sessionUpdate", "user_message_chunk")
+        put("messageId", messageId)
+        putJsonObject("content") { put("type", "text"); put("text", text) }
+    }
+
+    @Test
+    fun whichMessagesHoldTheTablet() {
+        for (text in listOf("🛑", " 🛑 stop watching", "🛑\uFE0F", "Stop the device", "stop the tablet.", "Hold the tablet!", "hold the device")) {
+            assertTrue(TabletRelay.isHoldMessage(text), text)
+        }
+        for (text in listOf("don't stop the tablet", "a 🛑 sign", "stop", "stop the device now", "let it go on", "")) {
+            assertFalse(TabletRelay.isHoldMessage(text), text)
+        }
+    }
+
+    @Test
+    fun aStopMessageFromThePhoneHoldsTheTabletWithoutCancellingTheTurn() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        host.update("chat-a", typedElsewhere("🛑", "plasmallm-9"))
+
+        c.waitFor("the bar says on hold") { it.tablet?.held == true }
+        assertEquals(listOf(true), savedHolds)
+        assertEquals(1, tabdesk.stops.get(), "TabDesk stops")
+        delay(100)
+        assertTrue(host.requests.none { it.first == "session/cancel" }, "the message's own turn goes on")
+        val refused = withTimeout(5_000) { host.mcpMessage(41, screenCall()).await() }
+        assertEquals(-33001L, refused.errorCode(), "and the agent is told the tablet is on hold")
+        assertTrue("🛑 message" in refused.obj("error")?.str("message").orEmpty())
+    }
+
+    @Test
+    fun aStopMessageTypedHereHoldsTheTabletBeforeTheTurnCouldResumeIt() = runBlocking {
+        val c = controller { protocol = 7; holdPrompts = true }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        assertTrue(c.sendPrompt("Stop the device"))
+        assertEquals(0, tabdesk.resumes.get(), "held first, so no resume")
+        assertEquals(listOf(true), savedHolds)
+        host.waitForRequests("session/prompt", 1) // the message still goes to the agent
+        c.waitFor("on hold") { it.tablet?.held == true }
+        Unit
+    }
+
+    @Test
+    fun aStopMessageInTheChatsHistoryDoesntHoldTheTabletAgain() = runBlocking {
+        val c = controller { protocol = 7; history["chat-a"] = listOf(typedElsewhere("🛑", "plasmallm-1")) }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        c.waitFor("the history") { it.items.isNotEmpty() }
+        delay(100)
+        assertTrue(savedHolds.isEmpty(), "a replayed 🛑 is history, not a request")
+        assertEquals(false, c.state.value.tablet?.held)
+    }
+
+    @Test
+    fun aStopMessageOnADeviceThatDoesntOfferTheTabletDoesNothing() = runBlocking {
+        val c = controller()
+        c.connect(profile.copy(useTablet = false))
+        c.joined("chat-a")
+        host.update("chat-a", typedElsewhere("🛑", "plasmallm-9"))
+        c.waitFor("the message") { it.items.isNotEmpty() }
+        delay(100)
+        assertTrue(savedHolds.isEmpty())
+        assertEquals(0, tabdesk.stops.get())
     }
 
     // --- approval on another device (D8) ---

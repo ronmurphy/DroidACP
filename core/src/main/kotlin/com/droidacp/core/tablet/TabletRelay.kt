@@ -212,8 +212,25 @@ class TabletRelay(
          * Why a call is refused while on hold. PlasmaLLM tells the agent "The tablet isn't
          * available right now: " and this.
          */
-        const val HELD = "the person at the tablet put it on hold in DroidACP (🛑). Nothing on it can be " +
-            "read or used until they tap “Let it go on” in DroidACP on the tablet; asking again, another way, " +
-            "or Continue on TabDesk's notification won't lift it. Tell the user it's on hold, and where it's lifted."
+        const val HELD = "it's on hold (🛑), set in DroidACP on the tablet or by a 🛑 message in the chat. " +
+            "Nothing on it can be read or used until someone taps “Let it go on” in DroidACP on the tablet; " +
+            "asking again, another way, a message, or Continue on TabDesk's notification won't lift it. " +
+            "Tell the user it's on hold, and where it's lifted."
+
+        /** Whole messages, besides any starting with 🛑, that put the tablet on hold. */
+        private val HOLD_PHRASES = setOf("stop the device", "stop the tablet", "hold the device", "hold the tablet")
+
+        /**
+         * A message that puts this tablet on hold (plan D21), from whichever device it was typed
+         * on: one starting with 🛑, or one that is just "stop the tablet" (or the device; "hold"
+         * works too). Whole messages only, so "don't stop the tablet" doesn't. Never one that
+         * lifts a hold: the agent can have PlasmaLLM send messages (wake_me, notes), so a
+         * message lifting it would let the agent lift its own hold.
+         */
+        fun isHoldMessage(text: String): Boolean {
+            val t = text.trim()
+            if (t.startsWith("🛑")) return true
+            return t.lowercase().trimEnd('.', '!', ' ') in HOLD_PHRASES
+        }
     }
 }

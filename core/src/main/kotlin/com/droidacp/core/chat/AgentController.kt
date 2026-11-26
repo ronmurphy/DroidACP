@@ -427,12 +427,18 @@ class AgentController(
      * precaution taken from the menu doesn't end the agent's other work. Its next tablet call
      * is refused, with the reason.
      */
-    fun holdTablet() {
+    fun holdTablet() = hold(cancelTurnUsingIt = true)
+
+    /**
+     * [cancelTurnUsingIt]: also the turn using the tablet now (the buttons). Not for a 🛑
+     * message, which is usually the turn itself: its calls are refused all the same.
+     */
+    private fun hold(cancelTurnUsingIt: Boolean) {
         val t = tablet ?: return
         val l = link
         val s = _state.value
         // Asked before the calls are refused, which ends them.
-        val turnUsesIt = l != null && s.busy && s.sessionId != null && l.tabletInUse()
+        val turnUsesIt = cancelTurnUsingIt && l != null && s.busy && s.sessionId != null && l.tabletInUse()
         t.setHeld(true)
         l?.tabletHeld()
         // cancelTurn() stops TabDesk too.
@@ -517,6 +523,8 @@ class AgentController(
         val shown = images.map { ContentBlock.Image(it.mimeType, it.base64, null) }
         _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet()) }
         l.ownTurn = sessionId
+        // 🛑 typed here holds the tablet before the turn could let it go on.
+        l.holdIfAsked(text)
         // The user sent a message: the tablet may go on after a Stop.
         l.userTurn()
 
@@ -1037,6 +1045,16 @@ class AgentController(
             return r.calls.value > 0 || tablet?.link?.status?.value?.control == TabletStatus.ACTIVE
         }
 
+        /**
+         * A message that holds the tablet (`TabletRelay.isHoldMessage`), on the device whose
+         * tablet it is: this one offers it. Notes from another tab's agent don't count.
+         */
+        fun holdIfAsked(text: String) {
+            if (relay?.allowed != true || tablet?.held?.value != false) return
+            if (PlasmaLlm.isAgentNote(text) || !TabletRelay.isHoldMessage(text)) return
+            hold(cancelTurnUsingIt = false)
+        }
+
         /** The tablet was put on hold: running calls end refused, and the bar says so. */
         fun tabletHeld() {
             relay?.hold()
@@ -1164,6 +1182,11 @@ class AgentController(
 
         override fun onSessionUpdate(sessionId: String, update: SessionUpdate) {
             if (!isCurrent || sessionId in left) return
+            // 🛑 typed on another device (the phone, the laptop, the Claude app). Not one replayed
+            // from the chat's history, which would hold the tablet each time the chat opens.
+            if (update is SessionUpdate.UserMessageChunk && !_state.value.replaying) {
+                (update.content as? ContentBlock.Text)?.text?.let { holdIfAsked(it) }
+            }
             _state.update { s ->
                 // Accept updates for our session, or before we know our session id (they can race the response).
                 if (s.sessionId == null || s.sessionId == sessionId) Transcript.apply(s, update) else s
