@@ -1,6 +1,8 @@
 package com.droidacp.core.tablet
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * DroidACP's connection to TabDesk's agent service on this tablet, as the relay sees it
@@ -150,4 +152,21 @@ class Tablet(
     val link: TabletLink,
     /** `droidacp:<uuid>`, the same for as long as DroidACP is installed (at most 128 characters). */
     val serverId: String,
-)
+    /** On hold when DroidACP started (saved by [saveHeld]). */
+    held: Boolean = false,
+    /** Keeps the hold through a restart; called on every change, before anything else happens. */
+    private val saveHeld: (Boolean) -> Unit = {},
+) {
+    private val _held = MutableStateFlow(held)
+
+    /**
+     * 🛑 On hold (plan D20): the agent may not use this tablet at all, whatever TabDesk allows,
+     * until the user lets it go on here. The user's next message doesn't lift it, unlike Stop.
+     */
+    val held: StateFlow<Boolean> = _held.asStateFlow()
+
+    fun setHeld(on: Boolean) {
+        saveHeld(on)
+        _held.value = on
+    }
+}

@@ -77,6 +77,8 @@ fun Composer(
     focusRequest: Int,
     draft: String? = null,
     onSent: () -> Unit,
+    /** The bar's "Let it go on": the chat screen asks to confirm (its dialog serves the menu too). */
+    onReleaseTablet: () -> Unit,
 ) {
     var field by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
 
@@ -134,7 +136,13 @@ fun Composer(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                TabletBar(state, onStop = actions::stopTablet, onOpenTabDesk = actions::openTabDesk)
+                TabletBar(
+                    state,
+                    onStop = actions::stopTablet,
+                    onHold = actions::holdTablet,
+                    onRelease = onReleaseTablet,
+                    onOpenTabDesk = actions::openTabDesk,
+                )
                 if (suggestions.isNotEmpty()) {
                     Column(Modifier.padding(bottom = 6.dp)) {
                         for (command in suggestions) {

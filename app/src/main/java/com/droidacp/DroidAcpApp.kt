@@ -78,7 +78,7 @@ class DroidAcpApp : Application() {
         controller = AgentController(
             appScope,
             BuildConfig.VERSION_NAME,
-            tablet = Tablet(tabDesk, TabDeskLink.serverId(this)),
+            tablet = Tablet(tabDesk, TabDeskLink.serverId(this), TabDeskLink.isHeld(this)) { TabDeskLink.saveHeld(this, it) },
             transports = transportFactory(),
         )
         profiles = ProfileStore(this)

@@ -116,6 +116,14 @@ class AgentController(
     @Volatile
     private var retries = 0
 
+    /**
+     * The user disconnected: nothing connects again by itself until they connect. Checked again
+     * when a wait ends, because a drop at the same moment can schedule one just after
+     * [disconnect] has cancelled what was waiting.
+     */
+    @Volatile
+    private var userDisconnected = false
+
     /** An edit of the connected agent, saved while connected: the next connection uses it, a reconnect too. */
     private var savedWhileConnected: Profile? = null
 
@@ -140,6 +148,7 @@ class AgentController(
         startNew: Boolean = false,
         resumeCwd: String? = null,
     ) {
+        userDisconnected = false
         cancelRetry()
         open(profile, resumeSessionId, keepTranscript, startNew, resumeCwd)
     }
@@ -176,7 +185,7 @@ class AgentController(
                 pastSessionsError = null,
                 plasmaLlm = null,
                 sessionId = if (keepTranscript) base.sessionId else null,
-                tablet = tablet?.takeIf { profile.offersTablet }?.let { TabletUse(it.link.status.value) },
+                tablet = tablet?.takeIf { profile.offersTablet }?.let { TabletUse(it.link.status.value, held = it.held.value) },
                 approvalElsewhere = emptySet(),
                 reconnecting = false,
             )
@@ -192,6 +201,7 @@ class AgentController(
     }
 
     fun disconnect() {
+        userDisconnected = true
         cancelRetry()
         // Also while a reconnect was waiting, when there's no link but TabDesk is still bound.
         tablet?.link?.setWanted(false)
@@ -238,7 +248,7 @@ class AgentController(
         _state.update {
             it.copy(
                 profile = updated,
-                tablet = tablet?.takeIf { bind }?.let { t -> it.tablet ?: TabletUse(t.link.status.value) },
+                tablet = tablet?.takeIf { bind }?.let { t -> it.tablet ?: TabletUse(t.link.status.value, held = t.held.value) },
             )
         }
         // Off: the running calls end as refused (-33001) before TabDesk is let go of.
@@ -409,8 +419,43 @@ class AgentController(
         if (_state.value.busy) cancelTurn() else link?.stopTablet()
     }
 
+    /**
+     * 🛑 Hold (plan D20): the agent may not use this tablet at all until the user lets it go
+     * on with [releaseTablet]: not after their next message, nor after a restart. Saved first,
+     * so it holds even if what follows fails. Running calls end refused and TabDesk stops, as
+     * with Stop; the turn is cancelled too, but only if it's using the tablet right now, so a
+     * precaution taken from the menu doesn't end the agent's other work. Its next tablet call
+     * is refused, with the reason.
+     */
+    fun holdTablet() = hold(cancelTurnUsingIt = true)
+
+    /**
+     * [cancelTurnUsingIt]: also the turn using the tablet now (the buttons). Not for a 🛑
+     * message, which is usually the turn itself: its calls are refused all the same.
+     */
+    private fun hold(cancelTurnUsingIt: Boolean) {
+        val t = tablet ?: return
+        val l = link
+        val s = _state.value
+        // Asked before the calls are refused, which ends them.
+        val turnUsesIt = cancelTurnUsingIt && l != null && s.busy && s.sessionId != null && l.tabletInUse()
+        t.setHeld(true)
+        l?.tabletHeld()
+        // cancelTurn() stops TabDesk too.
+        if (turnUsesIt) cancelTurn() else l?.stopTablet()
+    }
+
+    /** The user let the agent use this tablet again, after a hold. */
+    fun releaseTablet() {
+        val t = tablet ?: return
+        if (!t.held.value) return
+        t.setHeld(false)
+        link?.tabletReleased()
+    }
+
     /** Wait, then connect again to the same agent and chat: the tablet should stay reachable. */
     private fun scheduleReconnect(profile: Profile) {
+        if (userDisconnected) return
         val wait = reconnectDelaysMs[minOf(retries, reconnectDelaysMs.size - 1)]
         retries++
         _state.update { it.copy(reconnecting = true) }
@@ -418,8 +463,8 @@ class AgentController(
             kotlinx.coroutines.delay(wait)
             val s = _state.value
             val current = s.profile
-            // Something else connected meanwhile, or the setting went off.
-            if (link != null || current?.id != profile.id || !current.offersTablet) {
+            // The user disconnected, something else connected meanwhile, or the setting went off.
+            if (userDisconnected || link != null || current?.id != profile.id || !current.offersTablet) {
                 _state.update { it.copy(reconnecting = false) }
                 return@launch
             }
@@ -478,6 +523,8 @@ class AgentController(
         val shown = images.map { ContentBlock.Image(it.mimeType, it.base64, null) }
         _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet()) }
         l.ownTurn = sessionId
+        // 🛑 typed here holds the tablet before the turn could let it go on.
+        l.holdIfAsked(text)
         // The user sent a message: the tablet may go on after a Stop.
         l.userTurn()
 
@@ -695,7 +742,7 @@ class AgentController(
 
         /** For any PlasmaLLM agent on a device with TabDesk, so the setting can go on while connected. */
         val relay: TabletRelay? = tablet?.takeIf { profile.isPlasmaLlm }?.let {
-            TabletRelay(it.link, it.serverId, "c${nextConnection.getAndIncrement()}", allowed = profile.useTablet)
+            TabletRelay(it.link, it.serverId, "c${nextConnection.getAndIncrement()}", allowed = profile.useTablet, held = { it.held.value })
         }
 
         /** A session was opened (or tried) on this connection, so later declarations need a resume of their own. */
@@ -732,7 +779,7 @@ class AgentController(
             // The tablet's relay needs the connection: make it again by itself, unless the other
             // end refused it (a rejected token, an invalid address), which trying again won't change.
             val again = current != null && current.id == profile.id && current.offersTablet && tablet != null &&
-                error !is ConnectionRefusedException
+                error !is ConnectionRefusedException && !userDisconnected
             val wasRetrying = retries > 0
             _state.update {
                 it.copy(
@@ -986,7 +1033,44 @@ class AgentController(
          */
         fun userTurn() {
             val r = relay ?: return
-            if (r.allowed && r.declared) tablet?.link?.resume()
+            val t = tablet ?: return
+            // On hold, only the user's "let it" lifts it, never a message.
+            if (t.held.value) return
+            if (r.allowed && r.declared) t.link.resume()
+        }
+
+        /** The agent is using the tablet now: a call running, or TabDesk says it's active. */
+        fun tabletInUse(): Boolean {
+            val r = relay ?: return false
+            return r.calls.value > 0 || tablet?.link?.status?.value?.control == TabletStatus.ACTIVE
+        }
+
+        /**
+         * A message that holds the tablet (`TabletRelay.isHoldMessage`), on the device whose
+         * tablet it is: this one offers it. Notes from another tab's agent don't count.
+         */
+        fun holdIfAsked(text: String) {
+            if (relay?.allowed != true || tablet?.held?.value != false) return
+            if (PlasmaLlm.isAgentNote(text) || !TabletRelay.isHoldMessage(text)) return
+            hold(cancelTurnUsingIt = false)
+        }
+
+        /** The tablet was put on hold: running calls end refused, and the bar says so. */
+        fun tabletHeld() {
+            relay?.hold()
+            publishTablet()
+        }
+
+        /**
+         * The hold was lifted: TabDesk lets the agent go on again, as after a Stop. Whenever
+         * TabDesk is connected, declared to PlasmaLLM yet or not, so it isn't left stopped
+         * from the hold.
+         */
+        fun tabletReleased() {
+            val r = relay ?: return
+            val t = tablet ?: return
+            if (r.allowed && t.link.status.value.connected) t.link.resume()
+            publishTablet()
         }
 
         /** Follow TabDesk's state and the calls running, for the bar, Stop, and declaring. */
@@ -1029,7 +1113,7 @@ class AgentController(
             val t = tablet ?: return
             if (!isCurrent) return
             _state.update { s ->
-                s.copy(tablet = if (r.allowed) TabletUse(t.link.status.value, r.offered, r.declared, r.calls.value) else null)
+                s.copy(tablet = if (r.allowed) TabletUse(t.link.status.value, r.offered, r.declared, r.calls.value, t.held.value) else null)
             }
         }
 
@@ -1098,6 +1182,11 @@ class AgentController(
 
         override fun onSessionUpdate(sessionId: String, update: SessionUpdate) {
             if (!isCurrent || sessionId in left) return
+            // 🛑 typed on another device (the phone, the laptop, the Claude app). Not one replayed
+            // from the chat's history, which would hold the tablet each time the chat opens.
+            if (update is SessionUpdate.UserMessageChunk && !_state.value.replaying) {
+                (update.content as? ContentBlock.Text)?.text?.let { holdIfAsked(it) }
+            }
             _state.update { s ->
                 // Accept updates for our session, or before we know our session id (they can race the response).
                 if (s.sessionId == null || s.sessionId == sessionId) Transcript.apply(s, update) else s

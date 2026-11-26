@@ -200,6 +200,20 @@ starts, so the tablet works in chats started after both are on.
   **Stop**, and what keeps it from working otherwise (TabDesk not approved yet, agents
   switched off there, an older PlasmaLLM). Stop here, or on TabDesk's own notification,
   also stops the turn; the agent can use the tablet again after your next message.
+- **🛑 Hold**, beside Stop on the bar and in the chat's ⋮ menu at any time, is the
+  lasting one: it keeps the agent off the tablet entirely (screen reads and screenshots
+  included) until you choose **Let it go on** in DroidACP on the tablet. It stops the
+  turn too if the agent is using the tablet at that moment; otherwise the agent's other
+  work goes on, and its next tablet call is refused. Your next message doesn't lift it,
+  and neither does a restart. Useful when the tablet watches something private, a baby
+  monitor say. The agent is told the tablet is on hold, and that asking again won't
+  lift it.
+- **🛑 from anywhere:** a message starting with 🛑, or one that's just "stop the tablet"
+  (or "stop the device", "hold the tablet"), puts the tablet on hold too, whichever
+  device you send it from: your phone, the laptop, the Claude app. The tablet's DroidACP
+  sees the message in the chat and holds itself; the phone needs no TabDesk. A message
+  can't lift a hold (the agent can have messages sent for it), so that stays a tap on
+  the tablet.
 - **Quiet on this device**: no "finished", permission or problem notifications from
   this agent on the tablet, when your phone already has them.
 - A permission the agent asks for while it's using the tablet is answered on your

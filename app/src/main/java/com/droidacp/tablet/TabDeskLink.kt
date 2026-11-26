@@ -378,5 +378,16 @@ class TabDeskLink(context: Context) : TabletLink {
             prefs.edit().putString("serverId", id).apply()
             return id
         }
+
+        /** 🛑 The tablet is on hold (plan D20), as last saved. */
+        fun isHeld(context: Context): Boolean =
+            context.getSharedPreferences("tablet", Context.MODE_PRIVATE).getBoolean("held", false)
+
+        /** Saves the hold at once (not later, as apply() would), so it outlasts the app being killed. */
+        fun saveHeld(context: Context, held: Boolean) {
+            // A tiny file, on purpose on the tap's own thread: the hold is on disk before anything else runs.
+            val saved = context.getSharedPreferences("tablet", Context.MODE_PRIVATE).edit().putBoolean("held", held).commit()
+            if (!saved) Log.w(TAG, "The hold ($held) couldn't be saved; it lasts only until DroidACP restarts")
+        }
     }
 }
