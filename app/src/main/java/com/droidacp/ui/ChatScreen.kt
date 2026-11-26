@@ -1,9 +1,12 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.droidacp.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -69,6 +72,7 @@ import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
+import com.droidacp.core.people.stripPeople
 import com.droidacp.core.chat.ConnectionStatus
 import kotlinx.coroutines.launch
 
@@ -235,7 +239,12 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            Composer(
+            Column {
+                // The Pixel People: one per PlasmaLLM tab. Out of the way while typing.
+                if (!WindowInsets.isImeVisible) {
+                    PeopleStrip(state.stripPeople()) { person -> switchChat(person.sessionId) { actions.openChat(person.sessionId, person.cwd) } }
+                }
+                Composer(
                 state = state,
                 actions = actions,
                 attachments = attachments,
@@ -244,7 +253,8 @@ fun ChatScreen(
                 onSent = { scope.launch { follower.scrollToEnd() } },
                 onReleaseTablet = { confirmRelease = true },
                 onOpenContext = { settingsAtContext = true; settingsOpen = true },
-            )
+                )
+            }
         },
     ) { padding ->
         BoxWithConstraints(

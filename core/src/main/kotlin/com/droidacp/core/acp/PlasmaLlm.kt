@@ -241,17 +241,34 @@ data class PlasmaChat(val sessionId: String, val cwd: String, val title: String?
  * whether it's the tab the devices follow ([front]). Opening a chat a tab has only brings
  * that tab to the front, so nothing stops; any other chat replaces the front tab's.
  */
-data class PlasmaTab(val sessionId: String, val cwd: String, val title: String?, val busy: Boolean, val front: Boolean) {
+data class PlasmaTab(
+    val sessionId: String,
+    val cwd: String,
+    val title: String?,
+    val busy: Boolean,
+    val front: Boolean,
+    /** The tab's agent, its ACP `agentInfo` name, and what it's doing (protocol 9); null before. */
+    val agentName: String? = null,
+    val agentTitle: String? = null,
+    val activity: String? = null,
+    /** What it's doing in a few words, e.g. the running tool's title (protocol 9); often empty. */
+    val detail: String? = null,
+) {
     companion object {
         /** Null when the state has no `tabs` (PlasmaLLM before protocol 8). */
         fun parseAll(o: JsonObject): List<PlasmaTab>? = o.arr("tabs")?.mapNotNull { e ->
             (e as? JsonObject)?.let {
+                val agent = it.obj("agent")
                 PlasmaTab(
                     sessionId = it.str("sessionId") ?: "",
                     cwd = it.str("cwd") ?: "",
                     title = it.str("title")?.takeIf { t -> t.isNotBlank() },
                     busy = it.bool("busy") ?: false,
                     front = it.bool("front") ?: false,
+                    agentName = agent?.str("name")?.takeIf { t -> t.isNotBlank() },
+                    agentTitle = agent?.str("title")?.takeIf { t -> t.isNotBlank() },
+                    activity = it.str("activity")?.takeIf { t -> t.isNotBlank() },
+                    detail = it.str("detail")?.takeIf { t -> t.isNotBlank() },
                 )
             }
         }

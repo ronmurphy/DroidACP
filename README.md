@@ -250,6 +250,14 @@ TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
   becomes a stop square while the agent works. Under it, a thin **context bar** fills as the chat
   uses the agent's context, fading through amber to red as it nears full (and compaction); it
   drops back after a compaction, and a tap shows the numbers
+- **Pixel People** (with PlasmaLLM and two or more tabs): above the message box, one small
+  pixel person per PlasmaLLM tab, posed by what its agent is doing: asleep when idle, a laptop
+  for commands, a book for reading files, a desk and pencil for edits, a magnifier for searches,
+  a hand up when it needs your OK, a tablet for the tablet tools, and more. The shirt is the
+  agent's colour (Claude's orange, Gemini's four colours, ...). **Tap** a person to open its
+  chat (that never stops anyone's work), **long press** for its name and what it's doing. The
+  chat you're in is highlighted, and the strip hides while you type. See
+  [docs/PIXEL-PEOPLE.md](docs/PIXEL-PEOPLE.md)
 - **Pictures** in the chat (screenshots, the tablet's camera) open full screen with a tap:
   pinch or double-tap to zoom, drag to look around
 - **Slash commands**: type `/` to see what the agent offers
@@ -293,6 +301,7 @@ without anything Android-specific:
 | `chat/AgentController.kt` | Owns a connection, exposes `StateFlow<ChatState>` to the UI; follows PlasmaLLM's open chat |
 | `acp/PlasmaLlm.kt` | PlasmaLLM's companion protocol: addresses, the `initialize` declaration, `_plasmallm/...` notifications and error reasons |
 | `markdown/Markdown.kt`, `diff/LineDiff.kt` | Small Markdown parser, line-diff (longest common subsequence) |
+| `people/PixelPeople.kt`, `people/Activity.kt`, `people/Strip.kt` | The Pixel People: reading and drawing `resources/.../people/sprites.txt`, what an agent is doing and its pose, the strip's people |
 
 **`core/.../agent/`: the built-in agent (also plain Kotlin)**
 
