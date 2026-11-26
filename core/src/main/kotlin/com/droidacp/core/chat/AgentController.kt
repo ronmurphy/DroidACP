@@ -3,6 +3,7 @@ package com.droidacp.core.chat
 import com.droidacp.core.acp.AcpClient
 import com.droidacp.core.acp.AcpClientHandler
 import com.droidacp.core.acp.ConfigOption
+import com.droidacp.core.acp.ConnectionRefusedException
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.OpenElsewhere
 import com.droidacp.core.acp.OpenElsewhereChoice
@@ -115,6 +116,9 @@ class AgentController(
     @Volatile
     private var retries = 0
 
+    /** An edit of the connected agent, saved while connected: the next connection uses it, a reconnect too. */
+    private var savedWhileConnected: Profile? = null
+
     // ------------------------------------------------------------------
     // Connection lifecycle
     // ------------------------------------------------------------------
@@ -148,6 +152,8 @@ class AgentController(
         resumeCwd: String? = null,
     ) {
         val old = link
+        // This connection uses [profile]; an edit saved during the old one is in it (or superseded).
+        savedWhileConnected = null
         // When we keep our own transcript (reconnect), session/resume is enough; otherwise
         // prefer session/load so the agent replays the conversation for us.
         val newLink = Link(profile, resumeSessionId, resumeCwd?.trim()?.ifEmpty { null }, preferLoad = !keepTranscript, startNew = startNew)
@@ -197,9 +203,13 @@ class AgentController(
         link = null
         l.shutdown()
         cancelAllPermissions()
+        // An edit saved while connected counts from now on (Reconnect uses the state's profile).
+        val saved = savedWhileConnected
+        savedWhileConnected = null
         _state.update {
             it.copy(
                 status = ConnectionStatus.Disconnected,
+                profile = saved?.takeIf { p -> p.id == it.profile?.id } ?: it.profile,
                 busy = false,
                 remoteTurn = false,
                 cancelling = false,
@@ -383,7 +393,12 @@ class AgentController(
     fun profileSaved(p: Profile) {
         if (_state.value.profile?.id != p.id) return
         setTabletAllowed(p.useTablet)
-        _state.update { if (link == null) it.copy(profile = p) else it.copy(profile = it.profile?.copy(quietHere = p.quietHere)) }
+        if (link == null) {
+            _state.update { it.copy(profile = p) }
+        } else {
+            savedWhileConnected = p
+            _state.update { it.copy(profile = it.profile?.copy(quietHere = p.quietHere)) }
+        }
     }
 
     /**
@@ -711,9 +726,18 @@ class AgentController(
             link = null
             cancelAllPermissions()
             val wasConnected = _state.value.isConnected
+            // An edit saved while connected counts from now on, for a reconnect too.
+            val current = savedWhileConnected?.takeIf { it.id == _state.value.profile?.id } ?: _state.value.profile
+            savedWhileConnected = null
+            // The tablet's relay needs the connection: make it again by itself, unless the other
+            // end refused it (a rejected token, an invalid address), which trying again won't change.
+            val again = current != null && current.id == profile.id && current.offersTablet && tablet != null &&
+                error !is ConnectionRefusedException
+            val wasRetrying = retries > 0
             _state.update {
                 it.copy(
                     status = ConnectionStatus.Failed(reason),
+                    profile = current ?: it.profile,
                     busy = false,
                     remoteTurn = false,
                     cancelling = false,
@@ -722,12 +746,15 @@ class AgentController(
                     openElsewhere = null,
                     tablet = it.tablet?.copy(offered = false, declared = false, calls = 0),
                     approvalElsewhere = emptySet(),
+                    // With the failure, so nothing sees the connection as over while a reconnect waits
+                    // (the foreground service would stop).
+                    reconnecting = again,
                 )
             }
-            if (wasConnected) _events.tryEmit(AgentEvent.ConnectionLost(_state.value.agentName, reason))
-            // The tablet's relay needs the connection: make it again by itself.
-            val current = _state.value.profile
-            if (current != null && current.id == profile.id && current.offersTablet && tablet != null) scheduleReconnect(current)
+            // A drop it recovers from by itself needs no alert (the ongoing notification says it's
+            // connecting again); one it gives up on does, also after reconnecting for a while.
+            if ((wasConnected || wasRetrying) && !again) _events.tryEmit(AgentEvent.ConnectionLost(_state.value.agentName, reason))
+            if (again) scheduleReconnect(current!!) else retries = 0
         }
 
         private suspend fun initialize() {

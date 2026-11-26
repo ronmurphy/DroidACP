@@ -21,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -564,6 +565,86 @@ class TabletRelayTest {
         assertTrue(tookMs >= 450, "initialize answered doesn't reset the wait: 50 then 400 ms, took $tookMs")
         c.joined("chat-a")
         Unit
+    }
+
+    @Test
+    fun anEditSavedWhileConnectedIsUsedByTheReconnect() = runBlocking {
+        val urls = CopyOnWriteArrayList<String>()
+        val c = AgentController(scope, "test", tablet = Tablet(tabdesk, SERVER_ID), reconnectDelaysMs = listOf(50L)) { p, listener ->
+            urls += p.url
+            FakePlasmaLlm(listener).apply { protocol = 7 }.also { hosts += it }
+        }
+        c.connect(profile)
+        c.joined("chat-a")
+        c.profileSaved(profile.copy(url = "new-laptop"))
+        assertEquals("my-laptop", c.state.value.profile?.url, "the connection open now keeps its address")
+        host.close()
+        waitUntil("a second connection") { hosts.size == 2 }
+        assertEquals(listOf("my-laptop", "new-laptop"), urls.toList())
+    }
+
+    @Test
+    fun aReconnectRefusedForGoodStopsTryingAndSaysSo() = runBlocking {
+        val c = controller(reconnect = listOf(50L)) { protocol = 7; refuseForGood = hosts.size >= 1 } // counted before this one joins
+        val events = CopyOnWriteArrayList<com.droidacp.core.chat.AgentEvent>()
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { c.events.collect { events += it } }
+        c.connect(profile)
+        c.joined("chat-a")
+        host.close()
+        waitUntil("the reconnect refused") { hosts.size == 2 && c.state.value.status is com.droidacp.core.chat.ConnectionStatus.Failed && !c.state.value.reconnecting }
+        delay(300)
+        assertEquals(2, hosts.size, "no more tries after a refusal")
+        assertEquals(1, events.count { it is com.droidacp.core.chat.AgentEvent.ConnectionLost }, "one alert, when it gave up: $events")
+    }
+
+    @Test
+    fun aDropItRecoversFromByItselfRaisesNoAlert() = runBlocking {
+        val c = controller(reconnect = listOf(50L))
+        val events = CopyOnWriteArrayList<com.droidacp.core.chat.AgentEvent>()
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { c.events.collect { events += it } }
+        c.connect(profile)
+        c.joined("chat-a")
+        host.close()
+        waitUntil("a second connection") { hosts.size == 2 }
+        c.joined("chat-a")
+        assertTrue(events.none { it is com.droidacp.core.chat.AgentEvent.ConnectionLost }, "events: $events")
+    }
+
+    @Test
+    fun anAnswerTooBigToPassOnIsRefusedWith33002() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        val answer = host.mcpMessage(41, screenCall())
+        val (id, _) = tabdesk.nextSent()
+        val big = "x".repeat(com.droidacp.core.tablet.TabletRelay.MAX_ANSWER_CHARS)
+        tabdesk.answer(id, buildJsonObject { put("jsonrpc", "2.0"); put("id", "mcp-request:7"); putJsonObject("result") { put("text", big) } }.toString())
+        val reply = withTimeout(5_000) { answer.await() }
+        assertEquals(PlasmaLlm.TABLET_FAILED.toLong(), reply.errorCode())
+        c.waitFor("no calls running") { it.tablet?.calls == 0 }
+        Unit
+    }
+
+    @Test
+    fun theRunningCountEndsAtZeroWhenManyCallsEndTogether() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        val n = 40
+        val answers = (1..n).map { host.mcpMessage(100L + it, screenCall(requestId = "mcp-request:$it")) }
+        val ids = (1..n).map { tabdesk.nextSent().first }
+        waitUntil("all counted") { c.state.value.tablet?.calls == n }
+        ids.map { id ->
+            scope.launch(Dispatchers.Default) {
+                tabdesk.answer(id, buildJsonObject { put("jsonrpc", "2.0"); put("id", id); putJsonObject("result") {} }.toString())
+            }
+        }.forEach { it.join() }
+        answers.forEach { withTimeout(5_000) { it.await() } }
+        c.waitFor("no calls running") { it.tablet?.calls == 0 }
+        delay(100)
+        assertEquals(0, c.state.value.tablet?.calls)
     }
 
     @Test

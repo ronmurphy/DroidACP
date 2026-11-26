@@ -18,7 +18,6 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.concurrent.ConcurrentHashMap
@@ -102,8 +101,8 @@ class TabletRelay(
     suspend fun call(params: JsonObject): JsonObject {
         if (!allowed) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "it's turned off in DroidACP on the tablet")
         if (params.str("serverId") != serverId) throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "this device offers no tablet under that serverId")
-        val requestId = params.string("requestId")
-        val method = params.string("method")
+        val requestId = params.str("requestId")
+        val method = params.str("method")
         val inner = params["params"]
         if (requestId.isNullOrEmpty() || method.isNullOrEmpty() || !(inner == null || inner is JsonNull || inner is JsonObject)) {
             throw RpcException(RpcErrorCodes.INVALID_PARAMS, "mcp/message needs a requestId, a method, and params as an object")
@@ -122,11 +121,10 @@ class TabletRelay(
 
         val answer = coroutineScope {
             val sent = async(start = CoroutineStart.LAZY) { link.send(id, message) }
-            if (running.putIfAbsent(requestId, sent) != null) {
+            if (!track(requestId, sent)) {
                 sent.cancel()
                 throw RpcException(RpcErrorCodes.INVALID_PARAMS, "requestId $requestId is already running")
             }
-            _calls.value = running.size
             try {
                 sent.start()
                 sent.await()
@@ -137,11 +135,23 @@ class TabletRelay(
                 }
                 throw e
             } finally {
-                running.remove(requestId, sent)
-                _calls.value = running.size
+                untrack(requestId, sent)
             }
         }
+        if (answer.length > MAX_ANSWER_CHARS) {
+            throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer is too big to pass on (over ${MAX_ANSWER_CHARS / (1024 * 1024)} MiB)")
+        }
         return envelope(answer)
+    }
+
+    // The map and the count change together, so the count shown is never one already gone.
+    private fun track(requestId: String, sent: Deferred<String>): Boolean = synchronized(running) {
+        (running.putIfAbsent(requestId, sent) == null).also { if (it) _calls.value = running.size }
+    }
+
+    private fun untrack(requestId: String, sent: Deferred<String>) = synchronized(running) {
+        running.remove(requestId, sent)
+        _calls.value = running.size
     }
 
     /** TabDesk's JSON-RPC answer as PlasmaLLM wants it: `{result: …}` or `{error: …}`. */
@@ -158,11 +168,15 @@ class TabletRelay(
         throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer had neither a result nor an error")
     }
 
-    private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
-
     companion object {
         /** TabDesk takes Binder ids of up to this many characters. */
         const val MAX_ID_CHARS = 200
+
+        /**
+         * The biggest answer passed on. The WebSocket to PlasmaLLM (OkHttp) closes the whole
+         * connection rather than queue more than 16 MiB, so answers stay well under that.
+         */
+        const val MAX_ANSWER_CHARS = 12 * 1024 * 1024
 
         /** The name declared when TabDesk hasn't said the tablet's own. */
         const val DEFAULT_NAME = "Tablet"

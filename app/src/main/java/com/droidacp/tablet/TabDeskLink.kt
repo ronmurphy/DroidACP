@@ -1,18 +1,22 @@
 package com.droidacp.tablet
 
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.rpc.RpcErrorCodes
 import com.droidacp.core.rpc.RpcException
 import com.droidacp.core.tablet.TabletLink
+import com.droidacp.core.tablet.TabletRelay
 import com.droidacp.core.tablet.TabletStatus
 import dev.tabdesk.agent.IAgentCallback
 import dev.tabdesk.agent.IAgentService
@@ -60,21 +64,30 @@ class TabDeskLink(context: Context) : TabletLink {
     /** Calls sent and not yet answered, by Binder id. */
     private val pending = ConcurrentHashMap<String, CompletableDeferred<String>>()
 
+    // AIDL's strings may be null: the parameters say so, or Kotlin's own null check would throw
+    // before the body runs, and a one-way call would lose the update without a trace.
     private val callback = object : IAgentCallback.Stub() {
-        override fun reply(id: String, json: String) {
-            pending.remove(id)?.complete(json)
+        override fun reply(id: String?, json: String?) {
+            if (id == null) return
+            val waiter = pending.remove(id) ?: return
+            if (json == null) waiter.completeExceptionally(RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer was empty")) else waiter.complete(json)
         }
 
-        override fun onControlState(state: String, reason: String) {
-            _status.update { it.copy(control = state, reason = reason) }
+        override fun onControlState(state: String?, reason: String?) {
+            if (state == null) return
+            _status.update { it.copy(control = state, reason = reason.orEmpty()) }
             // A Stop (here or on TabDesk) drops the running calls, and TabDesk won't answer them.
             if (state == TabletStatus.STOPPED) failAll(RpcErrorCodes.REQUEST_CANCELLED, "Stopped on the tablet")
             // The approval, the switch or the name may have changed with it.
             worker.execute { readStatus() }
         }
 
-        override fun replyStream(id: String, pipe: ParcelFileDescriptor) {
-            val waiter = pending[id]
+        override fun replyStream(id: String?, pipe: ParcelFileDescriptor?) {
+            if (pipe == null) {
+                if (id != null) pending.remove(id)?.completeExceptionally(RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer was empty"))
+                return
+            }
+            val waiter = id?.let { pending[it] }
             if (waiter == null) {
                 closeQuietly(pipe)
                 return
@@ -83,24 +96,24 @@ class TabDeskLink(context: Context) : TabletLink {
                 val text = try {
                     ParcelFileDescriptor.AutoCloseInputStream(pipe).use { readAll(it) }
                 } catch (e: IOException) {
-                    null
+                    // A pipe that broke. An answer cut short is caught later: its JSON won't parse.
+                    RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer stopped early")
+                } catch (e: RpcException) {
+                    e
                 }
                 pending.remove(id, waiter)
-                // A pipe that broke, or an answer cut short (its JSON won't parse, and the relay says so).
-                if (text == null) {
-                    waiter.completeExceptionally(RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer stopped early"))
-                } else {
-                    waiter.complete(text)
-                }
+                if (text is RpcException) waiter.completeExceptionally(text) else waiter.complete(text as String)
             }
         }
     }
 
     override fun setWanted(wanted: Boolean) {
         worker.execute {
-            if (this.wanted == wanted) return@execute
+            // Wanted already, but the last try found no TabDesk, or one without the agent service
+            // or of another version: try again (each connection to PlasmaLLM asks).
+            if (this.wanted == wanted && !(wanted && couldNotBind())) return@execute
             this.wanted = wanted
-            if (wanted) bind() else unbind()
+            if (wanted) rebind() else unbind()
         }
     }
 
@@ -146,7 +159,46 @@ class TabDeskLink(context: Context) : TabletLink {
 
     // --- worker thread ---
 
+    private fun couldNotBind() = _status.value.reach in CAN_BIND_AGAIN
+
+    /** Drop a binding that didn't work, if any, and bind. */
+    private fun rebind() {
+        connection?.let { unbindQuietly(it) }
+        connection = null
+        service = null
+        bind()
+    }
+
+    /**
+     * TabDesk installed or updated while wanted, after a bind that failed: bind again. (A bound
+     * service whose process restarts for an update comes back by itself.)
+     */
+    private val packageChanges = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.data?.schemeSpecificPart != PACKAGE) return
+            worker.execute { if (wanted && couldNotBind()) rebind() }
+        }
+    }
+    private var watchingPackages = false
+
+    private fun watchPackages(on: Boolean) {
+        if (on == watchingPackages) return
+        watchingPackages = on
+        if (on) {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_PACKAGE_ADDED)
+                addAction(Intent.ACTION_PACKAGE_REPLACED)
+                addAction(Intent.ACTION_PACKAGE_CHANGED)
+                addDataScheme("package")
+            }
+            ContextCompat.registerReceiver(context, packageChanges, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        } else {
+            runCatching { context.unregisterReceiver(packageChanges) }
+        }
+    }
+
     private fun bind() {
+        watchPackages(true)
         if (!isInstalled(context)) {
             _status.value = TabletStatus(TabletStatus.Reach.NotInstalled)
             return
@@ -243,6 +295,7 @@ class TabDeskLink(context: Context) : TabletLink {
     }
 
     private fun unbind() {
+        watchPackages(false)
         connection?.let { unbindQuietly(it) }
         connection = null
         service = null
@@ -259,20 +312,21 @@ class TabDeskLink(context: Context) : TabletLink {
     }
 
     private fun failAll(code: Int, message: String) {
-        val calls = pending.values.toList()
-        pending.clear()
-        calls.forEach { it.completeExceptionally(RpcException(code, message)) }
+        // One by one: a call sent meanwhile is either failed here or left to run, never dropped.
+        for (id in pending.keys.toList()) pending.remove(id)?.completeExceptionally(RpcException(code, message))
     }
 
-    /** The whole pipe as UTF-8, or null past [MAX_ANSWER_BYTES] (PlasmaLLM's own limit). */
-    private fun readAll(input: InputStream): String? {
+    /** The whole pipe as UTF-8. Past [MAX_ANSWER_BYTES] it stops and throws: the answer can't be passed on. */
+    private fun readAll(input: InputStream): String {
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(64 * 1024)
         while (true) {
             val n = input.read(buffer)
             if (n < 0) break
             out.write(buffer, 0, n)
-            if (out.size() > MAX_ANSWER_BYTES) return null
+            if (out.size() > MAX_ANSWER_BYTES) {
+                throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer is too big to pass on (over ${MAX_ANSWER_BYTES / (1024 * 1024)} MiB)")
+            }
         }
         return out.toString(Charsets.UTF_8.name())
     }
@@ -291,7 +345,12 @@ class TabDeskLink(context: Context) : TabletLink {
         private const val ACTION_AGENT = "dev.tabdesk.action.AGENT"
         private const val ACTION_SETTINGS = "dev.tabdesk.action.AGENT_SETTINGS"
         private const val INTERFACE_VERSION = 1
-        private const val MAX_ANSWER_BYTES = 64 * 1024 * 1024
+
+        /** Reading stops past the relay's own limit, which keeps answers under the WebSocket's. */
+        private const val MAX_ANSWER_BYTES = TabletRelay.MAX_ANSWER_CHARS
+
+        /** Binding again can help after these: TabDesk installed or updated since. */
+        private val CAN_BIND_AGAIN = setOf(TabletStatus.Reach.NotInstalled, TabletStatus.Reach.NoService, TabletStatus.Reach.Incompatible)
 
         fun isInstalled(context: Context): Boolean = try {
             context.packageManager.getPackageInfo(PACKAGE, 0)

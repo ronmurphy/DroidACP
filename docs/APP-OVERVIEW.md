@@ -339,7 +339,7 @@ reads only their envelope; TabDesk decides what's allowed.
 - **TabDesk.** `app/.../tablet/TabDeskLink.kt` binds `dev.tabdesk.action.AGENT` only
   while the switch is on for the agent in use (so TabDesk's "wants to use this tablet"
   comes only when asked), checks `version()` is 1, `connect()`s its callback, and
-  reads answers from `reply` or a `replyStream` pipe (up to 64 MiB). TabDesk's process
+  reads answers from `reply` or a `replyStream` pipe (up to 12 MiB, under the WebSocket's 16 MiB send limit). TabDesk's process
   dying fails the running calls with -33002; Android binds again by itself.
 - **Stop.** Stop on the tablet bar calls TabDesk's `stop()` and cancels the turn; Stop
   on TabDesk's notification arrives as `onControlState("stopped", "tabdesk")` and
@@ -351,8 +351,11 @@ reads only their envelope; TabDesk decides what's allowed.
   waiting for an answer on the phone or laptop (the tablet is the device being
   driven), until `permission_resolved`.
 - **Reconnecting.** An agent that uses the tablet connects again by itself after a
-  drop (2 s, 5 s, 10 s, ... up to 5 minutes), and the foreground service stays up
-  meanwhile.
+  drop (2 s, 5 s, 10 s, ... up to 5 minutes, the wait starting again once a chat has
+  opened), and the foreground service stays up meanwhile. A refusal (HTTP 4xx, such as
+  a rejected token, or an invalid address: `ConnectionRefusedException`) ends it. A drop
+  it recovers from raises no alert; one it gives up on does. An edit of the agent saved
+  while connected is used from the next connection on, a reconnect too.
 - **UI.** `ui/TabletBar.kt` (over the message box) and `ui/TabletSettings.kt` (on the
   agent's form, with "Quiet on this device", `Profile.quietHere`, which drops this
   agent's event notifications on the tablet).

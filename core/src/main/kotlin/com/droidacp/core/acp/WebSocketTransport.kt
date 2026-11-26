@@ -33,7 +33,7 @@ class WebSocketTransport(
                 if (!token.isNullOrBlank()) header("Authorization", "Bearer ${token.trim()}")
             }.build()
         } catch (e: IllegalArgumentException) {
-            finish("Invalid URL: $url", e)
+            finish("Invalid URL: $url", ConnectionRefusedException("Invalid URL: $url", e))
             return
         }
 
@@ -62,12 +62,14 @@ class WebSocketTransport(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    val reason = when (response?.code) {
+                    val code = response?.code
+                    val reason = when (code) {
                         null -> t.message ?: t.javaClass.simpleName
-                        401, 403 -> "$refused (HTTP ${response.code})"
-                        else -> "HTTP ${response.code} ${response.message}".trim()
+                        401, 403 -> "$refused (HTTP $code)"
+                        else -> "HTTP $code ${response.message}".trim()
                     }
-                    finish(reason, t)
+                    // Refused (a 4xx): connecting again would be refused again.
+                    finish(reason, if (code != null && code in 400..499) ConnectionRefusedException(reason, t) else t)
                 }
             },
         )

@@ -768,8 +768,18 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     @Volatile
     var closeOnLoad = false
 
+    /** The connection is refused for good (a rejected token), so trying again can't help. */
+    @Volatile
+    var refuseForGood = false
+
     override fun connect() {
-        executor.execute { if (refuse) listener.onClosed("refused", null) else listener.onOpen() }
+        executor.execute {
+            when {
+                refuseForGood -> listener.onClosed("rejected (HTTP 403)", com.droidacp.core.acp.ConnectionRefusedException("rejected (HTTP 403)"))
+                refuse -> listener.onClosed("refused", null)
+                else -> listener.onOpen()
+            }
+        }
     }
 
     override fun close() {

@@ -365,7 +365,8 @@ class MainActivity : ComponentActivity() {
                 },
                 onForgetFolder = { kind, path -> app.folders.forget(if (kind == ProfileKind.PlasmaLlm) ProfileKind.Bridge else kind, path) },
                 bridgeFolders = app.bridgeFolders,
-                tabDeskInstalled = TabDeskLink.isInstalled(this@MainActivity),
+                // Asked once per visit, not on every change of the state while the form is open.
+                tabDeskInstalled = remember(editingId) { TabDeskLink.isInstalled(this@MainActivity) },
                 tablet = state.tablet?.takeIf { !copying && editingId != null && state.profile?.id == editingId },
                 connectedHere = !copying && editingId != null && state.profile?.id == editingId && state.isConnected,
                 laptopAllowsTablet = state.plasmaLlm?.tabletTools?.takeIf { !copying && state.profile?.id == editingId },
