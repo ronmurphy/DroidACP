@@ -146,9 +146,18 @@ fun ChatScreen(
     }
 
     // Switching to another chat while the agent works stops that work: ask first.
+    // A switch waiting for "Stop and switch", and whether it was to a new chat (for the wording).
     var pendingSwitch by remember { mutableStateOf<(() -> Unit)?>(null) }
-    fun switchChat(go: () -> Unit) {
-        if (state.busy) pendingSwitch = go else go()
+    var pendingSwitchIsNew by remember { mutableStateOf(false) }
+
+    /** Open [sessionId] (null: a new chat), asking first only if that stops the agent's work. */
+    fun switchChat(sessionId: String?, go: () -> Unit) {
+        if (state.switchStopsWork(sessionId)) {
+            pendingSwitchIsNew = sessionId == null
+            pendingSwitch = go
+        } else {
+            go()
+        }
     }
     val listState = rememberLazyListState()
     val follower = remember(listState) { EndFollower(listState) }
@@ -194,7 +203,7 @@ fun ChatScreen(
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             if (state.isConnected) {
-                                DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; switchChat { actions.newChat(null) } })
+                                DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; switchChat(null) { actions.newChat(null) } })
                                 DropdownMenuItem(text = { Text("Chats and bookmarks") }, onClick = { menuOpen = false; openChats() })
                                 // 🛑 at any time, not only while the bar shows (plan D20).
                                 state.tablet?.let { tablet ->
@@ -292,12 +301,12 @@ fun ChatScreen(
         PermissionDialog(permission, tool?.call, onAnswer = { optionId -> actions.answerPermission(permission.requestId, optionId) })
     }
     if (settingsOpen) SessionSettingsSheet(state, actions, atContext = settingsAtContext, onDismiss = { settingsOpen = false })
-    if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = ::switchChat, onDismiss = { chatsOpen = false })
+    if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = { id, go -> switchChat(id, go) }, onDismiss = { chatsOpen = false })
     // Under the stop question: answering it ("Keep working") brings this one back.
     val elsewhere = state.openElsewhere
     if (elsewhere != null && pendingSwitch == null) {
         OpenElsewhereDialog(elsewhere, onAnswer = { choice ->
-            if (choice == null) actions.answerOpenElsewhere(null) else switchChat { actions.answerOpenElsewhere(choice) }
+            if (choice == null) actions.answerOpenElsewhere(null) else switchChat(elsewhere.sessionId) { actions.answerOpenElsewhere(choice) }
         })
     }
     if (confirmRemoteRelease) {
@@ -322,7 +331,7 @@ fun ChatScreen(
         AlertDialog(
             onDismissRequest = { pendingSwitch = null },
             title = { Text("Stop the agent's work?") },
-            text = { Text(stopWarning(state)) },
+            text = { Text(stopWarning(state, pendingSwitchIsNew)) },
             confirmButton = {
                 TextButton(onClick = {
                     pendingSwitch = null
@@ -379,15 +388,23 @@ private fun connectingText(state: ChatState): String {
     }
 }
 
-private fun stopWarning(state: ChatState): String {
+private fun stopWarning(state: ChatState, newChat: Boolean): String {
     val plasma = state.plasmaLlm
-    return if (plasma != null) {
-        val stops = "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
-            "computer, and drops anything the agent planned to come back to in this chat (its wake_me)."
-        // PlasmaLLM with tabs: a chat open in another tab comes to the front, and this one goes on in its own.
-        if (plasma.protocol >= 4) "$stops If the chat you open is in another PlasmaLLM tab, this one keeps working in its tab instead." else stops
-    } else {
-        "${state.agentName} is working on this chat. Opening another one stops that work."
+    return when {
+        plasma == null -> "${state.agentName} is working on this chat. Opening another one stops that work."
+        // PlasmaLLM 8 lists its tabs, so this is asked only when the chat would be replaced.
+        plasma.tabs != null -> {
+            val opens = if (newChat) "A new chat opens in this chat's PlasmaLLM tab" else "That chat isn't open in a PlasmaLLM tab, so it opens in this one"
+            "${state.agentName} is working on this chat. $opens, which stops the work here, even if it was started on the " +
+                "computer, and drops anything the agent planned to come back to here (its wake_me). Chats open in other tabs " +
+                "don't stop anything."
+        }
+        else -> {
+            val stops = "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
+                "computer, and drops anything the agent planned to come back to in this chat (its wake_me)."
+            // PlasmaLLM with tabs: a chat open in another tab comes to the front, and this one goes on in its own.
+            if (plasma.protocol >= 4) "$stops If the chat you open is in another PlasmaLLM tab, this one keeps working in its tab instead." else stops
+        }
     }
 }
 

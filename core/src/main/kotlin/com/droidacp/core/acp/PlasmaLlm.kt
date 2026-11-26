@@ -1,6 +1,7 @@
 package com.droidacp.core.acp
 
 import com.droidacp.core.rpc.RpcException
+import com.droidacp.core.rpc.arr
 import com.droidacp.core.rpc.bool
 import com.droidacp.core.rpc.long
 import com.droidacp.core.rpc.obj
@@ -26,9 +27,10 @@ object PlasmaLlm {
     /**
      * The companion protocol version DroidACP speaks: the highest whose additions it
      * understands. From 2, PlasmaLLM lets it offer this tablet's tools (see [TABLET_UNAVAILABLE]);
-     * 3 to 7 added only things PlasmaLLM sends every client, which DroidACP handles.
+     * 3 to 7 added only things PlasmaLLM sends every client, which DroidACP handles; 8, the
+     * tabs' chats in `_plasmallm/state` ([PlasmaTab]).
      */
-    const val PROTOCOL = 7
+    const val PROTOCOL = 8
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
@@ -234,17 +236,47 @@ data class PlasmaChat(val sessionId: String, val cwd: String, val title: String?
 }
 
 /**
+ * One of the tabs in PlasmaLLM's window, from `_plasmallm/state`'s `tabs` (protocol 8): its
+ * chat ([sessionId] is empty while the tab starts one), whether its agent is working, and
+ * whether it's the tab the devices follow ([front]). Opening a chat a tab has only brings
+ * that tab to the front, so nothing stops; any other chat replaces the front tab's.
+ */
+data class PlasmaTab(val sessionId: String, val cwd: String, val title: String?, val busy: Boolean, val front: Boolean) {
+    companion object {
+        /** Null when the state has no `tabs` (PlasmaLLM before protocol 8). */
+        fun parseAll(o: JsonObject): List<PlasmaTab>? = o.arr("tabs")?.mapNotNull { e ->
+            (e as? JsonObject)?.let {
+                PlasmaTab(
+                    sessionId = it.str("sessionId") ?: "",
+                    cwd = it.str("cwd") ?: "",
+                    title = it.str("title")?.takeIf { t -> t.isNotBlank() },
+                    busy = it.bool("busy") ?: false,
+                    front = it.bool("front") ?: false,
+                )
+            }
+        }
+    }
+}
+
+/**
  * What PlasmaLLM says about itself in its `initialize` result (`_meta.plasmallm`).
  * [tabletTools]: the laptop's setting "Let the agent use a connected tablet" (protocol 2;
- * kept up to date from `_plasmallm/state`), null when it didn't say.
+ * kept up to date from `_plasmallm/state`), null when it didn't say. [tabs]: its tabs'
+ * chats (protocol 8, from `_plasmallm/state`), null until it says.
  */
-data class PlasmaHello(val protocol: Int, val version: String?, val chat: PlasmaChat, val tabletTools: Boolean? = null) {
+data class PlasmaHello(
+    val protocol: Int,
+    val version: String?,
+    val chat: PlasmaChat,
+    val tabletTools: Boolean? = null,
+    val tabs: List<PlasmaTab>? = null,
+) {
     companion object {
         /** Null when the other end isn't PlasmaLLM (no `_meta.plasmallm.protocol`). */
         fun parse(meta: JsonObject?): PlasmaHello? {
             val p = meta?.obj("plasmallm") ?: return null
             val protocol = p.long("protocol")?.toInt() ?: return null
-            return PlasmaHello(protocol, p.str("version"), PlasmaChat.parse(p), p.bool("tabletTools"))
+            return PlasmaHello(protocol, p.str("version"), PlasmaChat.parse(p), p.bool("tabletTools"), PlasmaTab.parseAll(p))
         }
     }
 }
@@ -252,10 +284,11 @@ data class PlasmaHello(val protocol: Int, val version: String?, val chat: Plasma
 /** A `_plasmallm/...` notification. */
 sealed interface PlasmaEvent {
     /**
-     * PlasmaLLM's chat, folder, title, busy state or tablet setting changed. `sessionId` is
-     * empty for a moment while it switches. [tabletTools]: as in [PlasmaHello].
+     * PlasmaLLM's chat, folder, title, busy state or tablet setting changed, or any tab's
+     * (protocol 8). `sessionId` is empty for a moment while it switches. [tabletTools] and
+     * [tabs]: as in [PlasmaHello].
      */
-    data class State(val chat: PlasmaChat, val tabletTools: Boolean? = null) : PlasmaEvent
+    data class State(val chat: PlasmaChat, val tabletTools: Boolean? = null, val tabs: List<PlasmaTab>? = null) : PlasmaEvent
 
     /**
      * A turn started or ended in [sessionId], whoever sent the prompt. [stillRunning]: it
@@ -285,7 +318,7 @@ sealed interface PlasmaEvent {
 
     companion object {
         fun parse(method: String, params: JsonObject): PlasmaEvent? = when (method) {
-            PlasmaLlm.STATE -> State(PlasmaChat.parse(params), params.bool("tabletTools"))
+            PlasmaLlm.STATE -> State(PlasmaChat.parse(params), params.bool("tabletTools"), PlasmaTab.parseAll(params))
             PlasmaLlm.TURN -> when (params.str("state")) {
                 "started" -> Turn(params.str("sessionId") ?: "", started = true, stopReason = null, by = params.str("by"))
                 "ended" -> Turn(

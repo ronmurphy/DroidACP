@@ -2,7 +2,11 @@ package com.droidacp.core
 
 import com.droidacp.core.acp.OpenElsewhere
 import com.droidacp.core.acp.OpenElsewhereChoice
+import com.droidacp.core.acp.PlasmaChat
+import com.droidacp.core.acp.PlasmaEvent
+import com.droidacp.core.acp.PlasmaHello
 import com.droidacp.core.acp.PlasmaLlm
+import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
 import com.droidacp.core.chat.AgentController
@@ -370,6 +374,82 @@ class PlasmaLlmTest {
         assertTrue(events.none { it is AgentEvent.TurnFinished }, "events: $events")
     }
 
+    // --- which chats the tabs have (protocol 8) ---
+
+    @Test
+    fun knowsWhichChatsPlasmaLlmsOtherTabsHave() = runBlocking {
+        val c = controller()
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        assertNull(c.state.value.plasmaLlm?.tabs, "none until PlasmaLLM says")
+
+        host.notify(
+            PlasmaLlm.STATE,
+            chatState(
+                "chat-a", "/home/me/project", busy = true,
+                tabs = listOf(
+                    tab("chat-a", "/home/me/project", "Open chat", busy = true, front = true),
+                    tab("chat-b", "/home/me/b", "Tab B", busy = true),
+                    tab("", "/home/me/c"), // a tab still starting its chat
+                ),
+            ),
+        )
+        val s = c.waitFor("the tabs") { it.plasmaLlm?.tabs != null }
+        assertEquals(listOf("chat-b"), s.otherTabs.map { it.sessionId })
+        assertEquals("Tab B", s.tabWith("chat-b")?.title)
+        assertTrue(s.tabWith("chat-b")!!.busy)
+        assertNull(s.tabWith("chat-a"), "this chat isn't another tab")
+        assertFalse(s.switchStopsWork("chat-b"), "chat b only comes to the front")
+        assertTrue(s.switchStopsWork("chat-x"), "any other chat replaces this one")
+    }
+
+    @Test
+    fun onlyASwitchThatReplacesAWorkingChatIsAskedAbout() {
+        val tabs = listOf(
+            PlasmaTab("chat-a", "/p", "A", busy = true, front = true),
+            PlasmaTab("chat-b", "/b", "B", busy = false, front = false),
+        )
+        fun state(busy: Boolean, protocol: Int = 8, tabs: List<PlasmaTab>? = null, plasma: Boolean = true) = ChatState(
+            sessionId = "chat-a",
+            busy = busy,
+            plasmaLlm = if (plasma) PlasmaHello(protocol, null, PlasmaChat("chat-a", "/p", "A", busy), tabs = tabs) else null,
+        )
+
+        // Idle: nothing to stop.
+        val idle = state(busy = false, tabs = tabs.map { it.copy(busy = false) })
+        assertFalse(idle.switchStopsWork("chat-x"))
+        assertFalse(idle.switchStopsWork(null))
+
+        // Working, with the tabs known: only a chat no tab has, or a new one, replaces this one.
+        val working = state(busy = true, tabs = tabs)
+        assertFalse(working.switchStopsWork("chat-b"))
+        assertTrue(working.switchStopsWork("chat-x"))
+        assertTrue(working.switchStopsWork(null))
+
+        // The front tab is working before this phone heard its turn start: still asked.
+        val heardLate = state(busy = false, tabs = tabs)
+        assertTrue(heardLate.switchStopsWork("chat-x"))
+        assertFalse(heardLate.switchStopsWork("chat-b"))
+
+        // An older PlasmaLLM (no tabs), or another agent: any switch mid-turn may stop it.
+        assertTrue(state(busy = true, protocol = 7).switchStopsWork("chat-b"))
+        assertTrue(state(busy = true, plasma = false).switchStopsWork("chat-b"))
+    }
+
+    @Test
+    fun readsTheTabsOnlyWhenPlasmaLlmSendsThem() {
+        val old = PlasmaEvent.parse(PlasmaLlm.STATE, chatState("chat-a", "/p")) as PlasmaEvent.State
+        assertNull(old.tabs)
+        val new = PlasmaEvent.parse(
+            PlasmaLlm.STATE,
+            chatState("chat-a", "/p", tabs = listOf(tab("chat-a", "/p", front = true), tab("chat-b", "/b", " ", busy = true))),
+        ) as PlasmaEvent.State
+        assertEquals(
+            listOf(PlasmaTab("chat-a", "/p", null, busy = false, front = true), PlasmaTab("chat-b", "/b", null, busy = true, front = false)),
+            new.tabs,
+        )
+    }
+
     @Test
     fun ourPromptInATabLeftBehindIsntStoppedOrFinished() = runBlocking {
         val c = controller { holdPrompts = true }
@@ -629,11 +709,21 @@ class PlasmaLlmTest {
 
     private fun ChatState.saysMoved() = items.any { it is ChatItem.Note && "so this screen moved" in it.text }
 
-    private fun chatState(sessionId: String, cwd: String, title: String? = null, busy: Boolean = false) = buildJsonObject {
+    private fun chatState(sessionId: String, cwd: String, title: String? = null, busy: Boolean = false, tabs: List<JsonObject>? = null) =
+        buildJsonObject {
+            put("sessionId", sessionId)
+            put("cwd", cwd)
+            if (title != null) put("title", title)
+            put("busy", busy)
+            if (tabs != null) put("tabs", buildJsonArray { tabs.forEach { add(it) } })
+        }
+
+    private fun tab(sessionId: String, cwd: String, title: String? = null, busy: Boolean = false, front: Boolean = false) = buildJsonObject {
         put("sessionId", sessionId)
         put("cwd", cwd)
         if (title != null) put("title", title)
         put("busy", busy)
+        put("front", front)
     }
 
     private fun turn(sessionId: String, state: String, stopReason: String? = null, stillRunning: Boolean = false) = buildJsonObject {

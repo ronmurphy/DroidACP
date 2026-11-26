@@ -9,6 +9,7 @@ import com.droidacp.core.acp.Implementation
 import com.droidacp.core.acp.PermissionOption
 import com.droidacp.core.acp.OpenElsewhere
 import com.droidacp.core.acp.PlasmaHello
+import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.Plan
 import com.droidacp.core.acp.SessionMode
 import com.droidacp.core.acp.SessionSummary
@@ -173,6 +174,28 @@ data class ChatState(
      * may use a tablet, on a device that isn't the tablet (that one lifts its hold itself).
      */
     val offersRemoteRelease: Boolean get() = canChat && tablet == null && plasmaLlm != null && plasmaLlm.tabletTools != false
+
+    /**
+     * Whether opening [sessionId] (null: a new chat) stops the agent's work in this chat, so
+     * the user is asked first. PlasmaLLM 8 lists its tabs' chats: opening one a tab has only
+     * brings that tab to the front, and this chat goes on in its own; any other chat replaces
+     * this one. Without that list (another agent, an older PlasmaLLM), any switch mid-turn may.
+     */
+    fun switchStopsWork(sessionId: String?): Boolean {
+        val tabs = plasmaLlm?.tabs
+        val working = busy || tabs?.any { it.front && it.busy } == true
+        if (!working) return false
+        if (tabs == null || sessionId == null) return true
+        return tabs.none { it.sessionId == sessionId }
+    }
+
+    /** PlasmaLLM's other tabs that have a chat (protocol 8): opening one of them stops nothing. */
+    val otherTabs: List<PlasmaTab>
+        get() = plasmaLlm?.tabs.orEmpty().filter { !it.front && it.sessionId.isNotEmpty() && it.sessionId != sessionId }
+
+    /** The other PlasmaLLM tab that has [sessionId] open, if one does. */
+    fun tabWith(sessionId: String): PlasmaTab? = otherTabs.firstOrNull { it.sessionId == sessionId }
+
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
     val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"
 

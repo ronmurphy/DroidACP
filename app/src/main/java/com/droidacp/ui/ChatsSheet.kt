@@ -67,10 +67,17 @@ data class ChatsPanel(
 /**
  * The title bar's Chats panel: pick a folder, start a chat there, or open one of its
  * chats or a bookmarked one. Nothing changes until a chat is picked. [onSwitch] runs a
- * switch to another chat, asking first if the agent is working (switching stops it).
+ * switch to a chat (null: a new one), asking first if that stops the agent's work.
+ * With PlasmaLLM 8 the other tabs' chats come first: opening one stops nothing.
  */
 @Composable
-fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwitch: (() -> Unit) -> Unit, onDismiss: () -> Unit) {
+fun ChatsSheet(
+    state: ChatState,
+    panel: ChatsPanel,
+    actions: ChatActions,
+    onSwitch: (sessionId: String?, go: () -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+) {
     // The folder being looked at; the open chat's until another one is picked.
     var folder by rememberSaveable { mutableStateOf(state.folder ?: "") }
     var browsing by remember { mutableStateOf(false) }
@@ -88,7 +95,7 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwit
 
     fun openChat(sessionId: String, cwd: String?) {
         onDismiss()
-        onSwitch { actions.openChat(sessionId, cwd) }
+        onSwitch(sessionId) { actions.openChat(sessionId, cwd) }
     }
 
     // A bookmarked chat may have been deleted since. Opening a chat that's gone makes
@@ -144,7 +151,7 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwit
                 onClick = {
                     onDismiss()
                     val cwd = folder.ifBlank { null }
-                    onSwitch { actions.newChat(cwd) }
+                    onSwitch(null) { actions.newChat(cwd) }
                 },
                 enabled = state.isConnected && !state.startingSession,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -162,6 +169,26 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwit
             }
 
             LazyColumn(Modifier.heightIn(max = 560.dp)) {
+                val tabs = state.otherTabs
+                if (tabs.isNotEmpty()) {
+                    item(key = "tabs") { SectionHeader("In PlasmaLLM's other tabs") }
+                    items(tabs, key = { "t:" + it.sessionId }) { tab ->
+                        ListItem(
+                            leadingContent = {
+                                if (tab.busy) {
+                                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                } else {
+                                    Box(Modifier.size(24.dp))
+                                }
+                            },
+                            headlineContent = { Text(tab.title ?: "Untitled chat", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = {
+                                Text(listOfNotNull(tab.cwd.ifEmpty { null }?.let(::shortFolder), if (tab.busy) "working" else "idle").joinToString(" · "))
+                            },
+                            modifier = Modifier.clickable(enabled = state.canSwitchChats) { openChat(tab.sessionId, tab.cwd.ifEmpty { null }) },
+                        )
+                    }
+                }
                 if (panel.bookmarks.isNotEmpty()) {
                     item(key = "bookmarks") { SectionHeader("Bookmarks") }
                     items(panel.bookmarks, key = { "b:" + it.sessionId }) { b ->
@@ -179,7 +206,7 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwit
                                 if (checkFailed == b.sessionId) {
                                     Text("Couldn't check this chat is still there. Try again.", color = MaterialTheme.colorScheme.error)
                                 } else {
-                                    Text(listOfNotNull(b.cwd.ifEmpty { null }?.let(::shortFolder), "open now".takeIf { isOpen }).joinToString(" · "))
+                                    Text(listOfNotNull(b.cwd.ifEmpty { null }?.let(::shortFolder), "open now".takeIf { isOpen }, inTab(state, b.sessionId)).joinToString(" · "))
                                 }
                             },
                             trailingContent = {
@@ -219,7 +246,7 @@ fun ChatsSheet(state: ChatState, panel: ChatsPanel, actions: ChatActions, onSwit
                         ListItem(
                             headlineContent = { Text(session.title ?: "Untitled chat", maxLines = 2, overflow = TextOverflow.Ellipsis) },
                             supportingContent = {
-                                Text(listOfNotNull(session.updatedAt?.replace('T', ' ')?.take(16), "open now".takeIf { isOpen }).joinToString(" · "))
+                                Text(listOfNotNull(session.updatedAt?.replace('T', ' ')?.take(16), "open now".takeIf { isOpen }, inTab(state, session.sessionId)).joinToString(" · "))
                             },
                             trailingContent = { BookmarkButton(saved) { actions.toggleBookmark(session.sessionId, cwd, session.title) } },
                             modifier = Modifier.clickable(enabled = !isOpen && state.canSwitchChats) { openChat(session.sessionId, cwd) },
@@ -324,6 +351,10 @@ private fun BookmarkButton(saved: Boolean, onToggle: () -> Unit) {
         }
     }
 }
+
+/** "in another tab" or "working in another tab" for a chat another PlasmaLLM tab has open. */
+private fun inTab(state: ChatState, sessionId: String): String? =
+    state.tabWith(sessionId)?.let { if (it.busy) "working in another tab" else "in another tab" }
 
 @Composable
 private fun SectionHeader(text: String) {
