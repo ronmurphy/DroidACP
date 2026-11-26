@@ -30,9 +30,9 @@ object PlasmaLlm {
      * understands. From 2, PlasmaLLM lets it offer this tablet's tools (see [TABLET_UNAVAILABLE]);
      * 3 to 7 added only things PlasmaLLM sends every client, which DroidACP handles; 8, the
      * tabs' chats in `_plasmallm/state` ([PlasmaTab]); 9, what each tab's agent is doing; 10,
-     * the look each agent chose for its Pixel Person ([PlasmaPerson]).
+     * the look each agent chose for its Pixel Person ([PlasmaPerson]); 11, its shirt colour.
      */
-    const val PROTOCOL = 10
+    const val PROTOCOL = 11
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
@@ -283,7 +283,8 @@ data class PlasmaTab(
 /**
  * The look an agent chose once for its Pixel Person (`tabs[].person`, protocol 10): option
  * ids of DroidACP's `sprites.txt`. [hairColor] may be missing (bald), [letter] is null for
- * none. Ids DroidACP doesn't know are drawn as that part of the default look.
+ * none, [shirt] null for the agent's own colours. Ids DroidACP doesn't know are drawn as
+ * that part of the default look.
  */
 data class PlasmaPerson(
     val skin: String?,
@@ -291,6 +292,7 @@ data class PlasmaPerson(
     val hairColor: String?,
     val accessories: List<String>,
     val letter: Char?,
+    val shirt: String? = null,
 ) {
     companion object {
         fun parse(o: JsonObject): PlasmaPerson = PlasmaPerson(
@@ -299,6 +301,7 @@ data class PlasmaPerson(
             hairColor = o.str("haircolor")?.ifBlank { null },
             accessories = o.arr("accessories")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty(),
             letter = o.str("letter")?.trim()?.singleOrNull(),
+            shirt = o.str("shirt")?.ifBlank { null },
         )
     }
 }

@@ -3,8 +3,10 @@
 
     python3 -I tools/pixelpeople/preview.py out.png [look...]
 
-A look is key=value pairs: skin= hair= haircolor= acc=a,b letter= shirt= (the option ids
-in sprites.txt). The Kotlin renderer (core/.../people/PixelPeople.kt) draws the same way.
+A look is key=value pairs: skin= hair= haircolor= acc=a,b letter= shirt= agent= (the
+option and agent ids in sprites.txt; no shirt= means the agent's colours). Each person
+stands on its agent's bar. The Kotlin renderer (core/.../people/PixelPeople.kt) draws the
+same way.
 """
 import sys
 from PIL import Image
@@ -25,7 +27,7 @@ def parse(path):
         if not s or s.startswith("#"):
             continue
         w = s.split()
-        if w[0] in ("palette", "option", "shirt", "face", "hair", "accessory", "part", "pose", "sign", "glyph"):
+        if w[0] in ("palette", "option", "agent", "face", "hair", "accessory", "part", "pose", "sign", "glyph"):
             cur = {"kind": w[0], "name": w[1] if len(w) > 1 else "", "args": w[2:], "lines": [], "grids": []}
             secs.append(cur)
             if w[0] == "glyph":
@@ -49,7 +51,7 @@ def mix(a, b, t):
     return tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(3)) + (255,)
 
 def build(secs):
-    d = {"palette": {}, "options": {}, "shirts": {}, "hair": {}, "acc": {}, "part": {}, "pose": {}, "effect": {}, "glyph": {}, "head": None}
+    d = {"palette": {}, "options": {}, "agents": {}, "hair": {}, "acc": {}, "part": {}, "pose": {}, "effect": {}, "glyph": {}, "head": None}
     for s in secs:
         k = s["kind"]
         if k == "palette":
@@ -59,8 +61,8 @@ def build(secs):
             d["options"].setdefault(s["name"], {})
             for l in s["lines"]:
                 d["options"][s["name"]][l[0]] = l[1:]
-        elif k == "shirt":
-            d["shirts"][s["name"]] = s["args"]
+        elif k == "agent":
+            d["agents"][s["name"]] = s["args"]
         elif k == "face":
             d["head"] = s
         elif k == "hair":
@@ -83,7 +85,8 @@ def render(d, pose, look):
     px = [[None] * W for _ in range(H)]
     skin = hexc(d["options"]["skin"][look["skin"]][0])
     hairc = hexc(d["options"]["haircolor"][look["haircolor"]][0])
-    shirt = [hexc(c) for c in d["shirts"][look["shirt"]]]
+    chosen = d["options"].get("shirt", {}).get(look.get("shirt") or "")
+    shirt = [hexc(chosen[0])] if chosen else [hexc(c) for c in d["agents"].get(look["agent"], d["agents"]["unknown"])]
     pal = dict(d["palette"])
     pal.update({"S": skin, "s": shade(skin, 0.85), "r": mix(skin, (224, 112, 122), 0.35), "H": hairc, "h": shade(hairc, 0.75)})
     lum = sum(0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2] for c in shirt) / len(shirt)
@@ -153,9 +156,30 @@ def render(d, pose, look):
             stamp(d["effect"][l[1]]["rows"], int(l[2]), int(l[3]))
     return px
 
+BAR_W, BAR_H = 22, 4
+
+def bar(d, agent):
+    """The bar under a person: the agent's colours side by side, outlined, corners left out."""
+    colors = [hexc(c) for c in d["agents"].get(agent, d["agents"]["unknown"])]
+    dark = sum(0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2] for c in colors) / len(colors) < 60
+    rows = []
+    for y in range(BAR_H):
+        row = []
+        for x in range(BAR_W):
+            ex, ey = x in (0, BAR_W - 1), y in (0, BAR_H - 1)
+            if ex and ey:
+                row.append(None)
+            elif ex or ey:
+                row.append(d["palette"]["G" if dark else "k"])
+            else:
+                c = colors[(x - 1) * len(colors) // (BAR_W - 2)]
+                row.append(shade(c, 0.8) if y == BAR_H - 2 else c)
+        rows.append(row)
+    return rows
+
 def main():
     out = sys.argv[1]
-    look = {"skin": "light", "hair": "short", "haircolor": "brown", "acc": [], "letter": "D", "shirt": "claude"}
+    look = {"skin": "light", "hair": "short", "haircolor": "brown", "acc": [], "letter": "D", "agent": "claude"}
     for kv in sys.argv[2:]:
         k, v = kv.split("=", 1)
         look[k] = [a for a in v.split(",") if a] if k == "acc" else v
@@ -174,20 +198,23 @@ def main():
             looks.append(dict(look, hair=h, haircolor=colors[i % len(colors)], skin=skins[i % len(skins)])); poses.append(pose)
         for a in d["acc"]:
             looks.append(dict(look, acc=[a])); poses.append(pose)
-        for sh in d["shirts"]:
+        for ag in d["agents"]:
+            looks.append(dict(look, agent=ag, letter=ag[0])); poses.append(pose)
+        for sh in d["options"].get("shirt", {}):
             looks.append(dict(look, shirt=sh, letter=sh[0])); poses.append(pose)
     scale, cols = int(look.get("scale", 5)), int(look.get("cols", 8))
     rows = (len(poses) + cols - 1) // cols
-    img = Image.new("RGBA", (cols * W * scale, rows * H * scale), (14, 17, 22, 255))
+    ch = H + BAR_H + 2  # a cell: the person, its bar, and a pixel's gap below
+    img = Image.new("RGBA", (cols * W * scale, rows * ch * scale), (14, 17, 22, 255))
+    def put(pixels, ox, oy):
+        for y, row in enumerate(pixels):
+            for x, c in enumerate(row):
+                if c:
+                    img.paste(c, (ox + x * scale, oy + y * scale, ox + (x + 1) * scale, oy + (y + 1) * scale))
     for n, name in enumerate(poses):
-        px = render(d, name, looks[n])
-        ox, oy = (n % cols) * W * scale, (n // cols) * H * scale
-        for y in range(H):
-            for x in range(W):
-                if px[y][x]:
-                    for dy in range(scale):
-                        for dx in range(scale):
-                            img.putpixel((ox + x * scale + dx, oy + y * scale + dy), px[y][x])
+        ox, oy = (n % cols) * W * scale, (n // cols) * ch * scale
+        put(render(d, name, looks[n]), ox, oy)
+        put(bar(d, looks[n]["agent"]), ox + (W - BAR_W) // 2 * scale, oy + H * scale)
     img.save(out)
     print(" ".join(poses))
 

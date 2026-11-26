@@ -42,13 +42,15 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.droidacp.core.people.Activity
 import com.droidacp.core.people.PixelPeople
+import com.droidacp.core.people.Sprite
 import com.droidacp.core.people.StripPerson
 import kotlinx.coroutines.delay
 
 /**
  * The Pixel People above the message box: one small person per PlasmaLLM tab, posed by what
- * its agent is doing. A tap opens that tab's chat (which never stops anything: the chat left
- * goes on in its tab); a long press shows its name for a moment.
+ * its agent is doing, on a bar in its agent's colours. A tap opens that tab's chat (which
+ * never stops anything: the chat left goes on in its tab); a long press shows its name for a
+ * moment.
  */
 @Composable
 fun PeopleStrip(people: List<StripPerson>, onOpen: (StripPerson) -> Unit) {
@@ -69,6 +71,8 @@ fun PeopleStrip(people: List<StripPerson>, onOpen: (StripPerson) -> Unit) {
 @Composable
 private fun PersonView(person: StripPerson, size: Dp, onOpen: (StripPerson) -> Unit) {
     val bitmap = remember(person.pose, person.look) { spriteBitmap(person.pose, person) }
+    val bar = remember(person.look.agent) { PixelPeople.default.bar(person.look.agent).toImageBitmap() }
+    val pixel = size / PixelPeople.SIZE
     var showName by remember { mutableStateOf(false) }
     LaunchedEffect(showName) {
         if (showName) {
@@ -77,9 +81,8 @@ private fun PersonView(person: StripPerson, size: Dp, onOpen: (StripPerson) -> U
         }
     }
     Box(contentAlignment = Alignment.Center) {
-        Box(
+        Column(
             Modifier
-                .size(size)
                 // Not clipped: a bubble or Zzz may reach the corner.
                 .background(
                     if (person.front) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
@@ -92,8 +95,18 @@ private fun PersonView(person: StripPerson, size: Dp, onOpen: (StripPerson) -> U
                     onLongClick = { showName = true },
                 )
                 .semantics { contentDescription = person.description + if (person.front) ", this chat" else "" },
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Image(bitmap, contentDescription = null, filterQuality = FilterQuality.None, modifier = Modifier.size(size))
+            // The agent's colours, whatever the person wears.
+            Image(
+                bar,
+                contentDescription = null,
+                filterQuality = FilterQuality.None,
+                modifier = Modifier
+                    .padding(bottom = pixel * 2)
+                    .size(pixel * PixelPeople.BAR_WIDTH, pixel * PixelPeople.BAR_HEIGHT),
+            )
         }
         if (showName) {
             Popup(
@@ -143,7 +156,8 @@ private fun pixelPerfect(target: Dp): Dp {
     return with(density) { (perPixel * PixelPeople.SIZE).toDp() }
 }
 
-private fun spriteBitmap(pose: String, person: StripPerson): ImageBitmap {
-    val sprite = PixelPeople.default.render(pose, person.look)
-    return Bitmap.createBitmap(sprite.pixels, sprite.width, sprite.height, Bitmap.Config.ARGB_8888).asImageBitmap()
-}
+private fun spriteBitmap(pose: String, person: StripPerson): ImageBitmap =
+    PixelPeople.default.render(pose, person.look).toImageBitmap()
+
+private fun Sprite.toImageBitmap(): ImageBitmap =
+    Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888).asImageBitmap()
