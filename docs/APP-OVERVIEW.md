@@ -277,8 +277,8 @@ PlasmaLLM went the shared-session way: see [PlasmaLLM companion](#plasmallm-comp
 PlasmaLLM (a Qt desktop ACP client, a separate repository) hosts DroidACP on port
 8766, over Tailscale only, letting in devices of the computer's own Tailscale
 account (no token). The link between the two apps is a written spec in
-PlasmaLLM's repository, `docs/companion-protocol.md`, currently version 1; changes
-go through it, with a version bump. DroidACP's side:
+PlasmaLLM's repository, `docs/companion-protocol.md` (DroidACP speaks version 7);
+changes go through it, with a version bump. DroidACP's side:
 
 - `ProfileKind.PlasmaLlm`: the user types the computer's Tailscale name;
   `PlasmaLlm.url()` makes it `ws://name:8766`. The folder is optional (empty =
@@ -309,8 +309,57 @@ go through it, with a version bump. DroidACP's side:
   it back in the message box. This works the same for bridge and built-in agents.
 
 All of this lives in `core/.../acp/PlasmaLlm.kt` and `AgentController.kt` (the
-`plasma` parts of `Link`). Not built yet: a side chat (needs protocol 2), and the
-PlasmaLLM-style side panel on tablets.
+`plasma` parts of `Link`). Not built yet: a side chat, and the PlasmaLLM-style side
+panel on tablets.
+
+### The tablet relay (TabDesk)
+
+A PlasmaLLM agent can let PlasmaLLM's agent use this tablet through TabDesk
+(`Profile.useTablet`, shown only where TabDesk is installed). Three parties, each
+with its own spec: PlasmaLLM's `docs/companion-protocol.md` (the tablet extension,
+version 2), TabDesk's `docs/agent-control.md` (its Binder interface, version 1), and
+the shared plan the three were built from. DroidACP passes MCP messages through and
+reads only their envelope; TabDesk decides what's allowed.
+
+- **Offering.** The tablet is offered when PlasmaLLM's `initialize` answer has
+  companion protocol ≥ 2 and `agentCapabilities.mcpCapabilities.acp`, the profile's
+  switch is on, and TabDesk says DroidACP is approved. It's declared as
+  `mcpServers: [{type: "acp", name: <tablet's name>, serverId: "droidacp:<uuid>"}]` in
+  every `session/new`, `load` and `resume`; when the offer changes mid-chat (TabDesk
+  approves DroidACP, the switch goes on), a `session/resume` with
+  `_meta.plasmallm.declareOnly` declares it again without reloading the chat.
+- **Calls.** PlasmaLLM sends `mcp/message {serverId, requestId, method, params,
+  sessionId, toolCallId}`; `TabletRelay` checks it (switch on, this serverId, a valid
+  message, a free requestId), sends the MCP request to TabDesk under the Binder id
+  `c<n>:<requestId>` (`<n>` numbers DroidACP's connections to PlasmaLLM), and answers `{result: {result | error}}`. Errors of its own:
+  -33001 when the tablet isn't available (with why, in words that follow PlasmaLLM's
+  "The tablet isn't available right now: "), -33002 when the call failed on the way,
+  -32800 when cancelled, -32602 for a malformed or duplicate call.
+  `$/cancel_request` cancels a running call, at TabDesk too.
+- **TabDesk.** `app/.../tablet/TabDeskLink.kt` binds `dev.tabdesk.action.AGENT` only
+  while the switch is on for the agent in use (so TabDesk's "wants to use this tablet"
+  comes only when asked), checks `version()` is 1, `connect()`s its callback, and
+  reads answers from `reply` or a `replyStream` pipe (up to 64 MiB). TabDesk's process
+  dying fails the running calls with -33002; Android binds again by itself.
+- **Stop.** Stop on the tablet bar calls TabDesk's `stop()` and cancels the turn; Stop
+  on TabDesk's notification arrives as `onControlState("stopped", "tabdesk")` and
+  cancels the turn if the chat on screen is the one using the tablet. Either way
+  TabDesk refuses calls until `resume()`, which DroidACP calls on the user's next
+  message (`_plasmallm/turn` with `by: "user"`, or a prompt sent here), never on a
+  turn the app started by itself.
+- **Approval elsewhere.** `_plasmallm/permission_elsewhere` marks a tool call as
+  waiting for an answer on the phone or laptop (the tablet is the device being
+  driven), until `permission_resolved`.
+- **Reconnecting.** An agent that uses the tablet connects again by itself after a
+  drop (2 s, 5 s, 10 s, ... up to 5 minutes), and the foreground service stays up
+  meanwhile.
+- **UI.** `ui/TabletBar.kt` (over the message box) and `ui/TabletSettings.kt` (on the
+  agent's form, with "Quiet on this device", `Profile.quietHere`, which drops this
+  agent's event notifications on the tablet).
+
+Tests: `TabletRelayTest` runs the relay and the controller against a fake
+PlasmaLLM and a fake TabDesk; the Binder side was tried on an emulator against
+TabDesk's build.
 
 ## The built-in agent ("On this device")
 
@@ -359,10 +408,11 @@ PlasmaLLM-style side panel on tablets.
 ## Testing
 
 ```sh
-./gradlew :core:test            # ~100 tests: protocol, transcript, markdown, diff,
+./gradlew :core:test            # ~120 tests: protocol, transcript, markdown, diff,
                                 # both built-in agents (scripted fake model / fake
                                 # cloud), SDK adapters against a local fake server,
                                 # the PlasmaLLM companion against a fake PlasmaLLM,
+                                # the tablet relay against a fake PlasmaLLM and TabDesk,
                                 # moving between chats against a fake ACP agent
 node bridge/acp-bridge.js --port 18765 --token test -- node bridge/mock-agent.js &
 DROIDACP_BRIDGE_URL=ws://127.0.0.1:18765 DROIDACP_BRIDGE_TOKEN=test ./gradlew :core:test
@@ -386,8 +436,10 @@ Roughly in order of value:
 
 1. **Try the two in-app agents on a real device** and fix what turns up. The
    riskiest part is the release build's code shrinking around the Anthropic SDK.
-2. **Try the PlasmaLLM companion on a device**, then its next steps: a side chat
-   (companion protocol 2) and a PlasmaLLM-like side panel on tablets.
+2. **Try the tablet relay on the real tablet** (after review), then its next
+   phases in the shared plan: TabDesk's tools that act, not just read, and the
+   phone's part in approving them. Then a side chat and a PlasmaLLM-like side panel
+   on tablets.
 3. **Answer agent-side `fs/*` requests** when the agent and app share files, and
    show the agent's `terminal` output: currently declined by design.
 4. **Other model providers** for the built-in agent (an OpenAI-compatible client
@@ -408,6 +460,7 @@ Roughly in order of value:
 | How updates change the chat | `core/.../chat/Transcript.kt` (+ `TranscriptTest`) |
 | Protocol requests / parsing | `core/.../acp/AcpClient.kt`, `AcpTypes.kt` |
 | Connection lifecycle, resume | `core/.../chat/AgentController.kt` |
+| The tablet relay (TabDesk) | `core/.../tablet/TabletRelay.kt`, `TabletLink.kt`, `app/.../tablet/TabDeskLink.kt` |
 | The PlasmaLLM companion | `core/.../acp/PlasmaLlm.kt`, the `plasma` parts of `AgentController.kt` (+ `PlasmaLlmTest`) |
 | Picking a transport per agent | `app/.../DroidAcpApp.kt` (`transportFactory`) |
 | The add/edit agent form | `app/.../ui/ProfilesScreen.kt`, `FolderPicker.kt` |
