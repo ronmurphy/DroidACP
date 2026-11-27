@@ -44,7 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.Plan
+import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.chat.ChatItem
+import com.droidacp.core.chat.ChatView
 
 @Composable
 fun UserBubble(item: ChatItem.User) {
@@ -127,6 +129,15 @@ fun AgentImage(image: ContentBlock.Image) {
                 .clickable(onClickLabel = "Open full screen to zoom in") { open = true },
         )
         if (open) ImageViewer(bitmap, "Image", onDismiss = { open = false })
+    }
+}
+
+/** A tool's pictures without its card, for the standard view ([ChatView]): a screenshot, an image it read. */
+@Composable
+fun ToolPictures(call: ToolCall) {
+    val pictures = remember(call.content) { ChatView.picturesOf(call) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        for (picture in pictures) AgentImage(picture)
     }
 }
 

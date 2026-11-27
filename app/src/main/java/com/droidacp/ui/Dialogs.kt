@@ -108,6 +108,8 @@ fun PermissionDialog(permission: PendingPermission, call: ToolCall?, onAnswer: (
 fun SessionSettingsSheet(
     state: ChatState,
     actions: ChatActions,
+    /** The developer view or the standard one ([com.droidacp.core.chat.ChatView]). */
+    developer: Boolean,
     /** Opened from the context bar: scrolled to "Context", near the end. */
     atContext: Boolean = false,
     onDismiss: () -> Unit,
@@ -127,6 +129,11 @@ fun SessionSettingsSheet(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Session settings", style = MaterialTheme.typography.titleLarge)
+
+            SectionTitle("View")
+            ChoiceRow("Standard", "The conversation and its pictures", selected = !developer) { actions.setDeveloperView(false) }
+            ChoiceRow("Developer", "Also the agent's tool calls, thinking and plans", selected = developer) { actions.setDeveloperView(true) }
+            Text("For every agent on this device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             if (state.modes.isNotEmpty() && !state.hasModeConfigOption) {
                 SectionTitle("Mode")
