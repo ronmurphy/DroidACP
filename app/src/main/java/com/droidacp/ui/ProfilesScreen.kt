@@ -71,6 +71,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.droidacp.core.acp.BridgeCommand
 import com.droidacp.core.acp.BridgeFolders
 import com.droidacp.core.acp.PlasmaLlm
@@ -80,6 +81,7 @@ import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.TabletUse
 import com.droidacp.data.StorageAccess
+import com.droidacp.service.Background
 import java.util.UUID
 
 /** Home screen: your saved agents. Tap one to connect. */
@@ -634,6 +636,7 @@ fun ProfileEditScreen(
                         )
                     }
                 }
+                BackgroundCard()
                 if (triedSave) {
                     for (problem in problems) Text("• $problem", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -721,6 +724,34 @@ private fun BridgeSetupCard(folder: String) {
                     OutlinedButton(onClick = { app.open(context) }) { Text(if (installed) "Open ${app.label}" else "Get ${app.label}") }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Battery optimisation can stop the connection while the screen is off (plan D14), for any
+ * agent: offered here, with Android's own dialog, until DroidACP is left out of it. It's
+ * checked again each time the form comes back, so it goes once allowed.
+ */
+@Composable
+private fun BackgroundCard() {
+    val context = LocalContext.current
+    var exempt by remember { mutableStateOf(Background.isExempt(context)) }
+    LifecycleResumeEffect(Unit) {
+        exempt = Background.isExempt(context)
+        onPauseOrDispose {}
+    }
+    if (exempt) return
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("With the screen off", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Android may stop DroidACP's connection to save battery while the screen is off, and the agent's " +
+                    "notifications stop with it. Letting DroidACP run in the background keeps it connected, for every agent.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = { Background.askToBeExempt(context) }) { Text("Let DroidACP run in the background") }
         }
     }
 }

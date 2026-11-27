@@ -209,7 +209,12 @@ class AgentController(
         tablet?.link?.setWanted(false)
         val l = link
         if (l == null) {
-            _state.update { if (it.tablet != null) it.copy(tablet = null) else it }
+            // A failed connection (maybe waiting to try again) ends too: the user is done with it,
+            // and the tablet's relay isn't connected again after a reboot (AfterReboot).
+            _state.update {
+                val status = if (it.status is ConnectionStatus.Failed) ConnectionStatus.Disconnected else it.status
+                if (it.tablet != null || status != it.status) it.copy(tablet = null, status = status) else it
+            }
             return
         }
         link = null

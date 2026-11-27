@@ -9,12 +9,14 @@ import com.droidacp.core.acp.BridgeFolders
 import com.droidacp.core.acp.WebSocketTransport
 import com.droidacp.core.agent.LocalAgentConfig
 import com.droidacp.core.agent.LocalTransport
+import com.droidacp.core.chat.AfterReboot
 import com.droidacp.core.chat.AgentController
 import com.droidacp.core.cloud.CloudAgentConfig
 import com.droidacp.core.cloud.CloudTransport
 import com.droidacp.core.tablet.Tablet
 import com.droidacp.core.chat.AgentEvent
 import com.droidacp.core.chat.ConnectionStatus
+import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.TransportFactory
 import com.droidacp.data.BookmarkStore
@@ -121,7 +123,23 @@ class DroidAcpApp : Application() {
     /** Connect again to the agent used last time, and its last chat. False if there's none. */
     fun reconnectLast(): Boolean {
         val last = profiles.get(profiles.lastProfileId) ?: return false
-        controller.connect(last, resumeSessionId = profiles.lastSessionId(last.id), resumeCwd = profiles.lastSessionCwd(last.id))
+        connectAgain(last)
+        return true
+    }
+
+    private fun connectAgain(profile: Profile) =
+        controller.connect(profile, resumeSessionId = profiles.lastSessionId(profile.id), resumeCwd = profiles.lastSessionCwd(profile.id))
+
+    /**
+     * The device has started (plan D15): if the tablet's relay was on, connect it again, so
+     * the tablet is ready without opening DroidACP. A connection that fails (the network
+     * isn't up yet) is tried again by itself, as for any drop. False if there's nothing to do.
+     */
+    fun connectAfterBoot(): Boolean {
+        val profile = profiles.get(profiles.afterRebootId)?.takeIf { it.offersTablet } ?: return false
+        val status = controller.state.value.status
+        if (status != ConnectionStatus.Disconnected && status !is ConnectionStatus.Failed) return false
+        connectAgain(profile)
         return true
     }
 
@@ -134,6 +152,20 @@ class DroidAcpApp : Application() {
                 .map { it.status == ConnectionStatus.Connecting || it.status == ConnectionStatus.Connected || it.reconnecting }
                 .distinctUntilChanged()
                 .collect { live -> if (live) AgentService.start(this@DroidAcpApp) else AgentService.stop(this@DroidAcpApp) }
+        }
+
+        // Which agent the tablet's relay connects to after a reboot, if any (plan D15).
+        appScope.launch {
+            controller.state
+                .map(AfterReboot::change)
+                .distinctUntilChanged()
+                .collect { change ->
+                    when (change) {
+                        is AfterReboot.Change.Remember -> if (profiles.afterRebootId != change.profileId) profiles.afterRebootId = change.profileId
+                        AfterReboot.Change.Forget -> if (profiles.afterRebootId != null) profiles.afterRebootId = null
+                        null -> {}
+                    }
+                }
         }
 
         // Remember each agent's latest session, and its folder, for "Continue last session".

@@ -226,8 +226,13 @@ starts, so the tablet works in chats started after both are on.
   this agent on the tablet, when your phone already has them.
 - A permission the agent asks for while it's using the tablet is answered on your
   phone or laptop, not on the tablet; the tool card says so while it waits.
-- An agent that uses the tablet connects again by itself after the connection drops.
-  Turning the setting on offers to let DroidACP stay connected in the background.
+- An agent that uses the tablet connects again by itself after the connection drops,
+  and after the tablet restarts (once it's unlocked the first time), if it was connected
+  then. Disconnecting by hand stops both. Turning the setting on offers to let DroidACP
+  stay connected in the background.
+- On any device, for any agent, the agent's form offers **Let DroidACP run in the
+  background** (Android's own battery dialog) until it's allowed, so the connection and
+  its notifications aren't stopped while the screen is off.
 
 The calls follow the companion protocol's tablet extension (version 2 of it), and
 TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
