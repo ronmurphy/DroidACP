@@ -18,6 +18,7 @@ import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.TabletUse
 import com.droidacp.core.chat.tabletAction
+import com.droidacp.core.chat.toolProgressNow
 
 object Notifications {
     private const val CHANNEL_CONNECTION = "connection"
@@ -49,7 +50,7 @@ object Notifications {
         state.permissions.isNotEmpty() -> "Needs your permission"
         state.waitingElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop"
         state.cancelling -> "Stopping…"
-        state.busy -> "Working…"
+        state.busy -> WORKING
         state.authRequired -> "Sign-in needed"
         else -> "Ready"
     }
@@ -58,20 +59,30 @@ object Notifications {
      * The ongoing notification's line. On a tablet that's quiet for this agent (the phone has
      * its notifications), it says what this device is for.
      */
-    fun ongoingText(state: ChatState): String {
+    fun ongoingText(state: ChatState): String = ongoingText(state, details = true)
+
+    /**
+     * [details]: what the agent is doing on the tablet (`Tap “Send”`) and a file being copied
+     * ("Copying report.pdf to the tablet: 3 of 8 MB"), this chat's or, on the tablet, another
+     * tab's. Left out of the public version, for the lock screen: they can name a file.
+     */
+    private fun ongoingText(state: ChatState, details: Boolean): String {
         val tablet = state.tablet
+        val progress = if (details) state.toolProgressNow ?: state.tabletProgress else null
         return when {
             tablet != null && state.isConnected && tablet.paused -> tablet.pausedText
             tablet != null && state.isConnected && tablet.inUse ->
-                state.tabletAction?.let { "${TabletUse.IN_USE}: $it" } ?: TabletUse.IN_USE
-            tablet != null && state.profile?.quietHere == true && state.isConnected -> "Letting the agent use this tablet"
-            else -> statusText(state)
+                (progress ?: state.tabletAction?.takeIf { details })?.let { "${TabletUse.IN_USE}: $it" } ?: TabletUse.IN_USE
+            tablet != null && state.profile?.quietHere == true && state.isConnected -> progress ?: "Letting the agent use this tablet"
+            // In place of "Working…", on the phone too.
+            else -> statusText(state).let { if (it == WORKING) progress ?: it else it }
         }
     }
 
-    /** [ongoingText] without the action, for the lock screen. */
-    fun publicText(state: ChatState): String =
-        if (state.tablet?.inUse == true && state.isConnected) TabletUse.IN_USE else ongoingText(state)
+    private const val WORKING = "Working…"
+
+    /** [ongoingText] without the action or the progress, for the lock screen. */
+    fun publicText(state: ChatState): String = ongoingText(state, details = false)
 
     /**
      * The silent, ongoing notification that keeps the foreground service (and connection) alive.

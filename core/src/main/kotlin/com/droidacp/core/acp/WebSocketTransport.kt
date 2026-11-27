@@ -78,6 +78,10 @@ class WebSocketTransport(
     /** Queue a message. Returns false if the socket is closed or its buffer is full. */
     override fun send(text: String): Boolean = socket?.send(text) ?: false
 
+    // OkHttp closes the whole connection rather than queue more than 16 MiB, so the tablet's
+    // relay waits for this to go down before passing on a big answer (plan D17).
+    override val queuedBytes: Long get() = socket?.queueSize() ?: 0L
+
     override fun close() {
         socket?.close(1000, "client closed")
         finish("Disconnected", null)

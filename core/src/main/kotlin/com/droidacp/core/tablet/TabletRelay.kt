@@ -10,6 +10,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +45,8 @@ class TabletRelay(
     allowed: Boolean,
     /** 🛑 The user put this tablet on hold ([Tablet.held]): every call is refused. */
     private val held: () -> Boolean = { false },
+    /** Bytes waiting to go out to PlasmaLLM on this connection ([com.droidacp.core.acp.Transport.queuedBytes]). */
+    private val queued: () -> Long = { 0L },
 ) {
     /** "Let the agent use this tablet (through TabDesk)" is on for this agent. */
     @Volatile
@@ -137,6 +140,7 @@ class TabletRelay(
             put("method", method)
             if (inner is JsonObject) put("params", inner)
         }.toString()
+        checkSize(message)
 
         val answer = try {
             sendTracked(requestId, id, message)
@@ -149,7 +153,36 @@ class TabletRelay(
         if (answer.length > MAX_ANSWER_CHARS) {
             throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer is too big to pass on (over ${MAX_ANSWER_CHARS / (1024 * 1024)} MiB)")
         }
+        if (answer.length > BIG_ANSWER_CHARS) awaitRoom()
         return envelope(answer)
+    }
+
+    /**
+     * A message over [MAX_SEND_CHARS] (the shared folder's chunks, plan D17) goes to TabDesk
+     * through a pipe, which only a TabDesk with [TabletStatus.streams] takes, and at most
+     * [MAX_STREAM_BYTES] of it. Anything bigger is refused here, and never sent.
+     */
+    private fun checkSize(message: String) {
+        if (message.length <= MAX_SEND_CHARS) return
+        if (!link.status.value.streams) {
+            throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk on the tablet is too old for a message this big (over 32 Ki characters): update TabDesk")
+        }
+        if (utf8Bytes(message) > MAX_STREAM_BYTES) {
+            throw RpcException(RpcErrorCodes.INVALID_REQUEST, "The message is over 2 MiB, more than TabDesk takes")
+        }
+    }
+
+    /**
+     * A big answer (a screenshot, a chunk of a file) goes out only once the connection's
+     * queue is nearly empty, so answers can't pile up past the 16 MiB at which OkHttp closes
+     * the connection (plan D17). PlasmaLLM's own timeout for the call still applies.
+     */
+    private suspend fun awaitRoom() {
+        val until = System.nanoTime() + ROOM_WAIT_MS * 1_000_000
+        while (queued() > ROOM_BYTES) {
+            if (System.nanoTime() > until) throw RpcException(PlasmaLlm.TABLET_FAILED, "The connection to PlasmaLLM is too slow to pass this answer on")
+            delay(ROOM_POLL_MS)
+        }
     }
 
     /** Sends [message] as Binder call [id], listed under [requestId] while it runs; TabDesk's answer. */
@@ -207,6 +240,38 @@ class TabletRelay(
     }
 
     companion object {
+        /** The longest message TabDesk takes in one Binder call (`send`), in characters. */
+        const val MAX_SEND_CHARS = 32 * 1024
+
+        /** The longest message TabDesk takes through a pipe (`sendStream`), in UTF-8 bytes. */
+        const val MAX_STREAM_BYTES = 2 * 1024 * 1024
+
+        /** An answer bigger than this waits for room in the connection's queue. */
+        const val BIG_ANSWER_CHARS = 1024 * 1024
+
+        /** "Nearly empty": the connection's queue holds at most this. */
+        const val ROOM_BYTES = 1024L * 1024
+
+        private const val ROOM_POLL_MS = 50L
+        private const val ROOM_WAIT_MS = 30_000L
+
+        /** [s]'s length in UTF-8, without encoding it. */
+        fun utf8Bytes(s: String): Long {
+            var n = 0L
+            var i = 0
+            while (i < s.length) {
+                val c = s[i]
+                n += when {
+                    c.code < 0x80 -> 1
+                    c.code < 0x800 -> 2
+                    Character.isHighSurrogate(c) && i + 1 < s.length && Character.isLowSurrogate(s[i + 1]) -> { i++; 4 }
+                    else -> 3
+                }
+                i++
+            }
+            return n
+        }
+
         /** MCP's method for a tool call, the only one answered with a refusal when TabDesk pauses. */
         const val TOOLS_CALL = "tools/call"
 

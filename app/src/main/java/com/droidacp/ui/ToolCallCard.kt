@@ -67,6 +67,8 @@ fun ToolCallCard(
     startExpanded: Boolean = false,
     /** Its permission is asked on another device or the laptop, not here (this tablet is the one it acts on). */
     waitingElsewhere: Boolean = false,
+    /** PlasmaLLM's passing progress line while it runs, e.g. a file being copied (plan D17). */
+    progress: String? = null,
 ) {
     // Edits are interesting enough to show open by default (when short).
     val hasDiff = call.content.any { it is ToolContent.Diff }
@@ -134,6 +136,16 @@ fun ToolCallCard(
                 "Waiting for approval on your phone or laptop",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            )
+        }
+        if (progress != null) {
+            Text(
+                progress,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
             )
         }

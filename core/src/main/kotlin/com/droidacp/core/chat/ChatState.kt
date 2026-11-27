@@ -163,6 +163,17 @@ data class ChatState(
      * there, not on the tablet the agent is using (`_plasmallm/permission_elsewhere`).
      */
     val approvalElsewhere: Set<String> = emptySet(),
+    /**
+     * PlasmaLLM's progress for a running tool call, by its id (`_plasmallm/tool_progress`,
+     * plan P11/D17): "Copying report.pdf from the tablet: 12 of 50 MB". A passing line on
+     * the card and in the notification, never part of the chat's history.
+     */
+    val toolProgress: Map<String, String> = emptyMap(),
+    /**
+     * The tablet: another tab's progress line (its chat isn't the one shown here), for the
+     * notification only. It goes a few seconds after PlasmaLLM stops sending it.
+     */
+    val tabletProgress: String? = null,
     /** The connection dropped, and DroidACP will connect again by itself shortly (the tablet's relay). */
     val reconnecting: Boolean = false,
     val nextKey: Long = 1,
@@ -171,6 +182,10 @@ data class ChatState(
 
     /** [approvalElsewhere] as shown: only during a turn, so one left over never shows after it. */
     val waitingElsewhere: Set<String> get() = if (busy) approvalElsewhere else emptySet()
+
+    /** [call]'s progress as shown: only while it runs, in a turn. */
+    fun progressOf(call: ToolCall): String? =
+        if (busy && (call.status == "pending" || call.status == "in_progress")) toolProgress[call.id] else null
     val canChat: Boolean get() = isConnected && sessionId != null && !startingSession
 
     /**

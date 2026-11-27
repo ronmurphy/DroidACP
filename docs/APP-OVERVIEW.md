@@ -353,6 +353,26 @@ reads only their envelope; TabDesk decides what's allowed.
   comes only when asked), checks `version()` is 1, `connect()`s its callback, and
   reads answers from `reply` or a `replyStream` pipe (up to 12 MiB, under the WebSocket's 16 MiB send limit). TabDesk's process
   dying fails the running calls with -33002; Android binds again by itself.
+- **Files** (plan D17, with TabDesk's T13 and PlasmaLLM's P11, companion protocol 14,
+  `PlasmaLlm.FILES`). PlasmaLLM's own `get_file`/`put_file` move a file in chunks of at
+  most 1 MiB (`folder_read`, `folder_write`), sent only to a tablet whose DroidACP says
+  14, which pass through like any call. A message over 32 Ki characters
+  goes to TabDesk as `sendStream`: `TabletRelay.checkSize` first refuses it with -33002
+  if TabDesk's `status()` hasn't `send_stream: true` (`TabletStatus.streams`; the
+  interface version stays 1), and with -32600 over 2 MiB of UTF-8. `TabDeskLink.stream`
+  then writes it into a pipe on a writer thread; a failed write means TabDesk closed its
+  end (a stall, a cancel, too big) and won't answer, so the call ends with -33002. An
+  answer over 1 MiB (a chunk read, a screenshot) waits until the WebSocket's queue holds
+  under 1 MiB (`Transport.queuedBytes`, OkHttp's `queueSize()`), for up to 30 s, so
+  answers can't pile up to the 16 MiB at which OkHttp closes the connection.
+  `_plasmallm/tool_progress {sessionId, toolCallId, text}` ("Copying report.pdf to the
+  tablet: 3 of 8 MB") is kept in `ChatState.toolProgress` for the chat shown, and shown
+  under the running tool's card (`progressOf`) and in the ongoing notification in place
+  of "Working…" or after "The agent is using this tablet:" (`toolProgressNow`), never on
+  the lock screen's version. PlasmaLLM also sends the tablet another tab's progress; that
+  chat isn't shown, so its line is kept in `ChatState.tabletProgress` for the notification
+  only, and goes 5 s after the last one (`PROGRESS_TIMEOUT_MS`). It never enters the chat's history, and goes when the call
+  or the turn ends, the chat changes or the connection closes.
 - **Stop.** Stop on the tablet bar calls TabDesk's `stop()` and cancels the turn; Stop
   on TabDesk's notification arrives as `onControlState("stopped", "tabdesk")` and
   cancels the turn of the chat the last tablet call came from: the chat on screen, or,

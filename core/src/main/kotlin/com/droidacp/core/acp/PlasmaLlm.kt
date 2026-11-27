@@ -32,15 +32,23 @@ object PlasmaLlm {
      * tabs' chats in `_plasmallm/state` ([PlasmaTab]); 9, what each tab's agent is doing; 10,
      * the look each agent chose for its Pixel Person ([PlasmaPerson]); 11, its shirt colour; 12,
      * a tablet call names the tab that made it, which may be a back tab; 13, `session/cancel`
-     * stops any tab's turn ([CANCEL_ANY_TAB]).
+     * stops any tab's turn ([CANCEL_ANY_TAB]); 14, the shared folder: PlasmaLLM's file tools
+     * send their chunks through this tablet, and `_plasmallm/tool_progress` comes ([FILES]).
      */
-    const val PROTOCOL = 13
+    const val PROTOCOL = 14
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
 
     /** `session/cancel` with any tab's chat stops that tab's turn (protocol 13); before, only the front tab's. */
     const val CANCEL_ANY_TAB = 13
+
+    /**
+     * PlasmaLLM sends the shared folder's chunk calls (`folder_*`) only to a tablet whose
+     * companion says this or later, and `_plasmallm/tool_progress` only to such connections:
+     * those following the chat, and the tablet's whichever chat it follows (protocol 14).
+     */
+    const val FILES = 14
 
     /** PlasmaLLM's phone access listens here unless the user changed it (the bridge uses 8765). */
     const val DEFAULT_PORT = 8766
@@ -51,6 +59,9 @@ object PlasmaLlm {
 
     /** A permission request for a tablet action this device offered, asked on the others instead (protocol 2). */
     const val PERMISSION_ELSEWHERE = "_plasmallm/permission_elsewhere"
+
+    /** Progress of one of PlasmaLLM's own tool calls, such as a file copied to or from the tablet (plan P11). */
+    const val TOOL_PROGRESS = "_plasmallm/tool_progress"
 
     /** PlasmaLLM's request carrying one MCP message for the tablet this device offered (protocol 2). */
     const val MCP_MESSAGE = "mcp/message"
@@ -369,6 +380,12 @@ sealed interface PlasmaEvent {
      */
     data class PermissionElsewhere(val sessionId: String, val toolCallId: String, val reason: String?) : PlasmaEvent
 
+    /**
+     * How a tool call of PlasmaLLM's own is getting on (plan P11), as short plain text, at most
+     * once a second: "Copying report.pdf from the tablet: 12 of 50 MB". Over when the call ends.
+     */
+    data class ToolProgress(val sessionId: String, val toolCallId: String, val text: String) : PlasmaEvent
+
     companion object {
         fun parse(method: String, params: JsonObject): PlasmaEvent? = when (method) {
             PlasmaLlm.STATE -> State(PlasmaChat.parse(params), params.bool("tabletTools"), PlasmaTab.parseAll(params))
@@ -390,10 +407,19 @@ sealed interface PlasmaEvent {
                 val toolCallId = params.str("toolCallId")
                 if (toolCallId.isNullOrEmpty()) null else PermissionElsewhere(params.str("sessionId") ?: "", toolCallId, params.str("reason"))
             }
+            PlasmaLlm.TOOL_PROGRESS -> {
+                val toolCallId = params.str("toolCallId")
+                // One line, and short: it's plain text, shown as it came.
+                val text = params.str("text")?.replace(Regex("\\s+"), " ")?.trim()?.take(MAX_PROGRESS_CHARS)
+                if (toolCallId.isNullOrEmpty() || text.isNullOrEmpty()) null else ToolProgress(params.str("sessionId") ?: "", toolCallId, text)
+            }
             else -> null
         }
     }
 }
+
+/** PlasmaLLM keeps a progress text under 200 characters; anything longer is cut here. */
+private const val MAX_PROGRESS_CHARS = 200
 
 /** PlasmaLLM's reason for an error (`error.data.plasmallm.reason`), or null for any other error. */
 val RpcException.plasmaReason: String?

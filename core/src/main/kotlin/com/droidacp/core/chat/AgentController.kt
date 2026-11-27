@@ -92,6 +92,8 @@ class AgentController(
     private val clientVersion: String,
     private val tablet: Tablet? = null,
     private val reconnectDelaysMs: List<Long> = RECONNECT_DELAYS_MS,
+    /** Another tab's progress line goes from the tablet's notification after this long without a new one. */
+    private val progressTimeoutMs: Long = PROGRESS_TIMEOUT_MS,
     private val transports: TransportFactory,
 ) {
     private val _state = MutableStateFlow(ChatState())
@@ -189,6 +191,8 @@ class AgentController(
                 sessionId = if (keepTranscript) base.sessionId else null,
                 tablet = tablet?.takeIf { profile.offersTablet }?.let { TabletUse(it.link.status.value, held = it.held.value) },
                 approvalElsewhere = emptySet(),
+                toolProgress = emptyMap(),
+                tabletProgress = null,
                 reconnecting = false,
             )
         }
@@ -234,6 +238,8 @@ class AgentController(
                 permissions = emptyList(),
                 tablet = null,
                 approvalElsewhere = emptySet(),
+                toolProgress = emptyMap(),
+                tabletProgress = null,
             )
         }
     }
@@ -572,7 +578,7 @@ class AgentController(
             if (text.isNotBlank()) add(AcpClient.textBlock(text))
         }
         val shown = images.map { ContentBlock.Image(it.mimeType, it.base64, null) }
-        _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet()) }
+        _state.update { Transcript.addUser(it, text, shown).copy(busy = true, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet(), toolProgress = emptyMap()) }
         l.ownTurn = sessionId
         // 🛑 typed here holds the tablet before the turn could let it go on.
         l.holdIfAsked(text)
@@ -616,7 +622,7 @@ class AgentController(
                 // A turn started elsewhere may be running by now (after PlasmaLLM switched chats), or
                 // the user moved to another chat and started one there; leave those alone.
                 _state.update {
-                    if (it.remoteTurn || it.sessionId != sessionId) it else it.copy(busy = false, cancelling = false, approvalElsewhere = emptySet())
+                    if (it.remoteTurn || it.sessionId != sessionId) it else it.copy(busy = false, cancelling = false, approvalElsewhere = emptySet(), toolProgress = emptyMap())
                 }
             }
             // Only report turns that really ended (not ones cut off by a dropped connection, or
@@ -716,6 +722,8 @@ class AgentController(
         remoteTurn = false,
         cancelling = false,
         approvalElsewhere = emptySet(),
+        toolProgress = emptyMap(),
+        tabletProgress = null,
     )
 
     private fun cancelAllPermissions() {
@@ -803,7 +811,10 @@ class AgentController(
 
         /** For any PlasmaLLM agent on a device with TabDesk, so the setting can go on while connected. */
         val relay: TabletRelay? = tablet?.takeIf { profile.isPlasmaLlm }?.let {
-            TabletRelay(it.link, it.serverId, "c${nextConnection.getAndIncrement()}", allowed = profile.useTablet, held = { it.held.value })
+            TabletRelay(
+                it.link, it.serverId, "c${nextConnection.getAndIncrement()}", allowed = profile.useTablet,
+                held = { it.held.value }, queued = { transport.queuedBytes },
+            )
         }
 
         /** A session was opened (or tried) on this connection, so later declarations need a resume of their own. */
@@ -854,6 +865,8 @@ class AgentController(
                     openElsewhere = null,
                     tablet = it.tablet?.copy(offered = false, declared = false, calls = 0),
                     approvalElsewhere = emptySet(),
+                    toolProgress = emptyMap(),
+                    tabletProgress = null,
                     // With the failure, so nothing sees the connection as over while a reconnect waits
                     // (the foreground service would stop).
                     reconnecting = again,
@@ -1298,7 +1311,31 @@ class AgentController(
                         if (s.sessionId == null || s.sessionId == event.sessionId) s.copy(approvalElsewhere = s.approvalElsewhere + event.toolCallId) else s
                     }
                 }
+                // The newest text replaces the last. PlasmaLLM sends the tablet another tab's too (protocol
+                // 14): its notification is the only sign of a copy while the screen is off.
+                is PlasmaEvent.ToolProgress -> when {
+                    event.sessionId == _state.value.sessionId -> _state.update { s ->
+                        if (s.sessionId != event.sessionId) s else s.copy(toolProgress = s.toolProgress + (event.toolCallId to event.text))
+                    }
+                    relay?.declared == true -> showTabletProgress(event.text)
+                }
                 null -> {}
+            }
+        }
+
+        /** Clears [ChatState.tabletProgress] once no new line has come for a while. */
+        private var progressExpiry: Job? = null
+
+        /**
+         * Another tab's progress, for this tablet's notification. That tab's chat isn't shown here,
+         * so its tool call's end isn't seen: the line goes when PlasmaLLM stops sending it.
+         */
+        private fun showTabletProgress(text: String) {
+            _state.update { it.copy(tabletProgress = text) }
+            progressExpiry?.cancel()
+            progressExpiry = appScope.launch {
+                kotlinx.coroutines.delay(progressTimeoutMs)
+                _state.update { if (it.tabletProgress == text) it.copy(tabletProgress = null) else it }
             }
         }
 
@@ -1351,14 +1388,14 @@ class AgentController(
                 // us now (it's answered "cancelled"), so the move isn't put down to a refusal.
                 leftRunning = turn.sessionId to s.sessionTitle
                 if (ownTurn == turn.sessionId) ownTurn = null
-                _state.update { it.copy(busy = false, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet()) }
+                _state.update { it.copy(busy = false, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet(), toolProgress = emptyMap()) }
                 return
             }
             // Our own turn ends with the session/prompt answer instead.
             if (!s.remoteTurn) return
             val reason = turn.stopReason ?: "end_turn"
             _state.update { st ->
-                val ended = st.copy(busy = false, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet())
+                val ended = st.copy(busy = false, remoteTurn = false, cancelling = false, approvalElsewhere = emptySet(), toolProgress = emptyMap())
                 Transcript.describeStopReason(reason)?.let { Transcript.addNote(ended, it) } ?: ended
             }
             val after = _state.value
@@ -1414,6 +1451,9 @@ class AgentController(
         const val HALT_MESSAGE = "🛑"
 
         /** The waits before connecting again by itself, growing; the last one repeats. */
+        /** PlasmaLLM sends progress at most once a second; this long without one, another tab's copy is over. */
+        const val PROGRESS_TIMEOUT_MS = 5_000L
+
         val RECONNECT_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L, 30_000L, 60_000L, 120_000L, 300_000L)
 
         /** Convenience for tests and simple setups: bridge agents only. */

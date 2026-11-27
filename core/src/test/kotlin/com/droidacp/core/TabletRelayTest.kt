@@ -79,12 +79,14 @@ class TabletRelayTest {
         tablet: Boolean = true,
         held: Boolean = false,
         reconnect: List<Long> = listOf(60_000L),
+        progressTimeout: Long = AgentController.PROGRESS_TIMEOUT_MS,
         configure: FakePlasmaLlm.() -> Unit = { protocol = 7 },
     ) = AgentController(
         scope,
         "test",
         tablet = Tablet(tabdesk, SERVER_ID, held) { savedHolds += it }.takeIf { tablet },
         reconnectDelaysMs = reconnect,
+        progressTimeoutMs = progressTimeout,
     ) { _, listener ->
         FakePlasmaLlm(listener).apply(configure).also { hosts += it }
     }
@@ -913,6 +915,41 @@ class TabletRelayTest {
         host.notify(PlasmaLlm.PERMISSION_RESOLVED, buildJsonObject { put("sessionId", "chat-a"); put("toolCallId", "tool-1") })
         c.waitFor("resolved") { it.approvalElsewhere.isEmpty() }
         assertTrue(c.state.value.permissions.isEmpty(), "never asked here")
+    }
+
+    // --- PlasmaLLM's progress for a file copied (P11, D17) ---
+
+    @Test
+    fun progressIsKeptForTheShownChatAndEndsWithTheTurn() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        c.waitFor("the laptop's turn") { it.busy }
+        fun progress(chat: String, call: String, text: String) =
+            host.notify(PlasmaLlm.TOOL_PROGRESS, buildJsonObject { put("sessionId", chat); put("toolCallId", call); put("text", text) })
+        progress("chat-b", "tool-9", "Another tab's copy")
+        progress("chat-a", "tool-1", "Copying report.pdf to the tablet: 1 of 8 MB")
+        progress("chat-a", "tool-1", "Copying report.pdf to the tablet: 2 of 8 MB")
+        val s = c.waitFor("the newest line") { it.toolProgress["tool-1"] == "Copying report.pdf to the tablet: 2 of 8 MB" }
+        assertFalse("tool-9" in s.toolProgress, "only the chat shown here")
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "ended"); put("stopReason", "end_turn") })
+        c.waitFor("gone with the turn") { !it.busy && it.toolProgress.isEmpty() }
+        Unit
+    }
+
+    @Test
+    fun theTabletShowsAnotherTabsCopyUntilItsProgressStops() = runBlocking {
+        val c = controller(progressTimeout = 300L)
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        // A back tab copies a file: PlasmaLLM sends its progress to the tablet too (protocol 14).
+        host.notify(PlasmaLlm.TOOL_PROGRESS, buildJsonObject { put("sessionId", "chat-b"); put("toolCallId", "tool-9"); put("text", "Copying scan.dat to the tablet: 3.1 MB of 7.3 MB") })
+        val s = c.waitFor("another tab's line") { it.tabletProgress == "Copying scan.dat to the tablet: 3.1 MB of 7.3 MB" }
+        assertTrue(s.toolProgress.isEmpty(), "not this chat's card")
+        c.waitFor("gone once it stops coming") { it.tabletProgress == null }
+        Unit
     }
 
     // --- staying connected for the relay (D14) ---

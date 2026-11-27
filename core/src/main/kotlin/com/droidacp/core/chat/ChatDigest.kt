@@ -35,6 +35,20 @@ val ChatState.tabletAction: String?
         return null
     }
 
+/**
+ * PlasmaLLM's progress line for the newest running tool call that has one (plan D17), for
+ * the notification: "Copying report.pdf from the tablet: 12 of 50 MB". Null when none has.
+ */
+val ChatState.toolProgressNow: String?
+    get() {
+        if (!busy || toolProgress.isEmpty()) return null
+        for (item in items.asReversed().asSequence().take(RECENT_ITEMS)) {
+            val call = (item as? ChatItem.Tool)?.call ?: continue
+            progressOf(call)?.let { return it }
+        }
+        return null
+    }
+
 private const val RECENT_ITEMS = 20
 
 /**
