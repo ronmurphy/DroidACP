@@ -17,6 +17,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.droidacp.core.chat.ChatState
+import com.droidacp.core.chat.TabletUse
 import com.droidacp.core.tablet.TabletStatus
 
 /** What the tablet bar says, its buttons, and how it looks. */
@@ -60,10 +61,10 @@ private fun tabletBarText(state: ChatState): TabletBarText? {
     if (!tablet.offered) return TabletBarText("This PlasmaLLM can't use a tablet yet. Update PlasmaLLM on the computer.")
     val hold = TabletBarText.Button.Hold
     return when {
-        tablet.paused -> TabletBarText("Paused because you touched the screen. Send a message to let the agent go on.", hold)
+        tablet.paused -> TabletBarText(tablet.pausedText, hold)
         tablet.stopped -> TabletBarText("Stopped. The agent can use the tablet again when you send the next message.", hold)
         tablet.inUse -> TabletBarText(
-            "The agent is using this tablet",
+            TabletUse.IN_USE,
             listOf(TabletBarText.Button.Stop, hold),
             TabletBarText.Look.Active,
         )

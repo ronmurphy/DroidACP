@@ -5,7 +5,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlin.math.roundToLong
 
 /**
  * The tablet's actions in words, for their cards, the widget and the notification (plan
@@ -14,8 +15,8 @@ import kotlinx.serialization.json.intOrNull
  * calls them (`mcp__tablet__tap`).
  *
  * Only the arguments are described: what the agent asked for, not what's on the screen.
- * A text to type is never shown, only how long it is, since the notification can be on the
- * lock screen.
+ * A text to type is never in the words, only how long it is, since the notification can be
+ * on the lock screen. (The card's raw arguments still hold it, shown when the card is opened.)
  */
 object TabletActions {
     // mcp__tablet__<tool>, as PlasmaLLM names the tablet's tools.
@@ -90,18 +91,21 @@ object TabletActions {
         return null
     }
 
+    // TabDesk takes x and y as numbers; a decimal one is rounded, as a tap lands on a pixel.
     private fun point(input: JsonObject): String? {
-        val x = (input["x"] as? JsonPrimitive)?.intOrNull ?: return null
-        val y = (input["y"] as? JsonPrimitive)?.intOrNull ?: return null
-        return "$x, $y"
+        val x = (input["x"] as? JsonPrimitive)?.takeUnless { it.isString }?.doubleOrNull?.takeIf { it.isFinite() } ?: return null
+        val y = (input["y"] as? JsonPrimitive)?.takeUnless { it.isString }?.doubleOrNull?.takeIf { it.isFinite() } ?: return null
+        return "${x.roundToLong()}, ${y.roundToLong()}"
     }
 
     private fun direction(input: JsonObject): String? =
         input.string("direction")?.takeIf { it in setOf("up", "down", "left", "right") }
 
+    // Counted in characters (code points), so an emoji is never cut in half.
     private fun clip(s: String): String {
         val one = s.replace(Regex("\\s+"), " ").trim()
-        return if (one.length <= QUOTE_CHARS) one else one.take(QUOTE_CHARS - 1).trimEnd() + "…"
+        if (one.codePointCount(0, one.length) <= QUOTE_CHARS) return one
+        return one.substring(0, one.offsetByCodePoints(0, QUOTE_CHARS - 1)).trimEnd() + "…"
     }
 
     private fun parse(rawInput: String?): JsonObject? {

@@ -96,8 +96,18 @@ data class TabletUse(
     /** Stopped (here or on TabDesk) until the next message the user sends. */
     val stopped: Boolean get() = status.control == TabletStatus.STOPPED
 
-    /** Paused because someone touched the screen (TabDesk's tool list 2). */
+    /** Paused by TabDesk until the next message the user sends: someone touched the screen (tool list 2), or another reason. */
     val paused: Boolean get() = status.control == TabletStatus.PAUSED
+
+    /** Why it's [paused], for the bar and the notification. */
+    val pausedText: String get() = if (status.reason == TabletStatus.TOUCHED) PAUSED_BY_TOUCH else PAUSED
+
+    companion object {
+        /** The bar and the notification while the agent uses the tablet. */
+        const val IN_USE = "The agent is using this tablet"
+        const val PAUSED_BY_TOUCH = "Paused because you touched the screen. Send a message to let the agent go on."
+        const val PAUSED = "Paused on the tablet. Send a message to let the agent go on."
+    }
 }
 
 data class UsageInfo(val used: Long, val size: Long, val costAmount: Double?, val costCurrency: String?) {

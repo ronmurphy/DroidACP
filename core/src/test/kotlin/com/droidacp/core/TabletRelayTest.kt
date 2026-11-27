@@ -6,10 +6,12 @@ import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
+import com.droidacp.core.rpc.RpcErrorCodes
 import com.droidacp.core.rpc.RpcException
 import com.droidacp.core.rpc.long
 import com.droidacp.core.rpc.obj
 import com.droidacp.core.rpc.str
+import com.droidacp.core.tablet.PausedOnTablet
 import com.droidacp.core.tablet.Tablet
 import com.droidacp.core.tablet.TabletLink
 import com.droidacp.core.tablet.TabletRelay
@@ -515,14 +517,24 @@ class TabletRelayTest {
         c.waitFor("the laptop's turn") { it.busy }
         val running = host.mcpMessage(41, screenCall())
         tabdesk.nextSent()
+        val listing = host.mcpMessage(42, buildJsonObject {
+            put("serverId", SERVER_ID)
+            put("requestId", "mcp-request:8")
+            put("method", "tools/list")
+            put("sessionId", "chat-a")
+        })
+        tabdesk.nextSent()
 
-        // D11: TabDesk answers nothing, so the agent gets TabDesk's own `paused` refusal.
+        // D11: TabDesk answers nothing, so a tool call gets TabDesk's own `paused` refusal…
         val resumes = tabdesk.resumes.get()
         tabdesk.pauseOnTablet()
         val answer = withTimeout(5_000) { running.await() }.obj("result")?.obj("result")
         assertEquals(true, answer?.get("isError")?.jsonPrimitive?.booleanOrNull, "answer: $answer")
         assertEquals("paused", answer?.obj("_meta")?.str("dev.tabdesk/refused"))
         assertTrue(answer.toString().contains("The user touched the screen"))
+        // …and anything else, which a tool's result doesn't fit, ends as cancelled.
+        assertEquals(RpcErrorCodes.REQUEST_CANCELLED.toLong(), withTimeout(5_000) { listing.await() }.errorCode())
+        assertFalse("touched" in TabletStatus.pausedRefusal("other").toString(), "another pause isn't called a touch")
 
         // The turn ends, as for a Stop, and the bar says why.
         waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" && it.second.str("sessionId") == "chat-a" } }
@@ -1190,9 +1202,9 @@ class FakeTabDesk : TabletLink {
         status.value = status.value.copy(control = TabletStatus.STOPPED, reason = TabletStatus.BY_TABDESK)
     }
 
-    /** The user touched the screen (tool list 2): TabDesk drops the running call, which TabDeskLink answers. */
+    /** The user touched the screen (tool list 2): TabDesk drops the running calls, which TabDeskLink fails. */
     fun pauseOnTablet() {
-        waiting.values.forEach { it.complete(TabletStatus.PAUSED_ANSWER) }
+        waiting.values.forEach { it.completeExceptionally(PausedOnTablet(TabletStatus.TOUCHED)) }
         status.value = status.value.copy(control = TabletStatus.PAUSED, reason = TabletStatus.TOUCHED)
     }
 

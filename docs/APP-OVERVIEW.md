@@ -363,14 +363,18 @@ reads only their envelope; TabDesk decides what's allowed.
   turn the app started by itself.
 - **Pause** (plan D11, TabDesk's tool list 2). A real touch on the screen while the agent
   is acting arrives as `onControlState("paused", "touched")`: TabDesk drops the running
-  call, so `TabDeskLink` answers it with TabDesk's own `paused` refusal
-  (`TabletStatus.PAUSED_ANSWER`, an MCP result the agent reads), and the turn that used
-  the tablet is cancelled as for Stop. The bar says "Paused because you touched the
-  screen…", and the user's next message calls `resume()`.
+  calls and answers none, so `TabDeskLink` fails them with `PausedOnTablet`. `TabletRelay`
+  answers a `tools/call` with TabDesk's own `paused` refusal (`TabletStatus.pausedRefusal`,
+  an MCP result the agent reads) and any other method as cancelled (-32800). The turn
+  that used the tablet is cancelled as for Stop. The bar says "Paused because you touched
+  the screen…" (or only "Paused on the tablet…" for another reason), and the user's next
+  message calls `resume()`.
 - **Action cards** (plan D12). `TabletActions` puts the acting tools' arguments in words
   for the card, the widget and the ongoing notification: `Tap “Send”`, `Type 12 characters
-  into “Message”`, `Press Back`. A text to type is never shown, only its length, and the
-  lock screen's version of the notification leaves the action out.
+  into “Message”`, `Press Back`. The text to type is never in these words, only its
+  length; the card's arguments, shown when it's opened, still hold it as the agent sent
+  it. The notification's public version leaves the action out, for a lock screen set to
+  hide sensitive content; otherwise Android shows the whole notification there.
 - **🛑 Hold** (plan D20). `AgentController.holdTablet()` saves the hold first
   (`Tablet.held`, kept in the app's `tablet` preferences by `TabDeskLink.saveHeld`),
   ends the running calls refused and stops TabDesk; it cancels the turn only if the

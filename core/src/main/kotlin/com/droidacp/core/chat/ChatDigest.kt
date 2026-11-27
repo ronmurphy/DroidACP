@@ -21,15 +21,21 @@ val ToolCall.displayTitle: String get() = TabletActions.describe(title, rawInput
 
 /**
  * The tablet action this chat's agent is doing now, in words (`Tap “Send”`), for the
- * notification; null when its running tool isn't one.
+ * notification: the newest tablet action still running among the last [RECENT_ITEMS] items,
+ * as a note or another tool's card can come after it. Null when none is.
  */
 val ChatState.tabletAction: String?
     get() {
         if (!busy) return null
-        val call = (items.lastOrNull() as? ChatItem.Tool)?.call ?: return null
-        if (call.status != "pending" && call.status != "in_progress") return null
-        return TabletActions.describe(call.title, call.rawInput)
+        for (item in items.asReversed().asSequence().take(RECENT_ITEMS)) {
+            val call = (item as? ChatItem.Tool)?.call ?: continue
+            if (call.status != "pending" && call.status != "in_progress") continue
+            TabletActions.describe(call.title, call.rawInput)?.let { return it }
+        }
+        return null
     }
+
+private const val RECENT_ITEMS = 20
 
 /**
  * The conversation as short lines of plain text, for the home-screen widget: what you
