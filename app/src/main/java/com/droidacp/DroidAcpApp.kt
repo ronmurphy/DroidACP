@@ -19,6 +19,7 @@ import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.chat.TransportFactory
+import com.droidacp.data.AgentApprovals
 import com.droidacp.data.BookmarkStore
 import com.droidacp.data.FolderHistory
 import com.droidacp.data.ProfileStore
@@ -60,6 +61,10 @@ class DroidAcpApp : Application() {
     lateinit var view: ViewSettings
         private set
 
+    /** Agents PlasmaLLM may download and run, as the user said once each ([AgentApprovals]). */
+    lateinit var agentApprovals: AgentApprovals
+        private set
+
     /**
      * TabDesk's agent service on this device, through which PlasmaLLM's agent may use the
      * tablet (only for an agent with "Let the agent use this tablet" on).
@@ -92,6 +97,7 @@ class DroidAcpApp : Application() {
         folders = FolderHistory(this)
         bookmarks = BookmarkStore(this)
         view = ViewSettings(this) { profiles.profiles.value.isNotEmpty() }
+        agentApprovals = AgentApprovals(this)
         Notifications.createChannels(this)
         registerActivityLifecycleCallbacks(ForegroundTracker())
         watchController()

@@ -1,5 +1,6 @@
 package com.droidacp.core.chat
 
+import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.rpc.long
 import com.droidacp.core.rpc.str
 import kotlinx.serialization.json.Json
@@ -12,8 +13,10 @@ import kotlinx.serialization.json.put
 /**
  * A chat saved to come back to quickly: which one, the folder it runs in (opening it
  * there, not in whatever folder is open), and its title, kept up to date while it's open.
+ * [agentId]: for PlasmaLLM, which of its agents the chat is with (protocol 15), since only
+ * that agent can open it; null for one saved before, which is Claude's ([PlasmaLlm.CLAUDE]).
  */
-data class ChatBookmark(val sessionId: String, val cwd: String, val title: String?, val savedAt: Long)
+data class ChatBookmark(val sessionId: String, val cwd: String, val title: String?, val savedAt: Long, val agentId: String? = null)
 
 /** Bookmark lists, newest first, and how they're stored (one JSON list per saved agent). */
 object ChatBookmarks {
@@ -42,6 +45,7 @@ object ChatBookmarks {
                     put("cwd", b.cwd)
                     if (b.title != null) put("title", b.title)
                     put("savedAt", b.savedAt)
+                    if (b.agentId != null) put("agentId", b.agentId)
                 },
             )
         }
@@ -53,7 +57,7 @@ object ChatBookmarks {
             (Json.parseToJsonElement(text) as? JsonArray)?.mapNotNull { e ->
                 val o = e as? JsonObject ?: return@mapNotNull null
                 val id = o.str("sessionId")?.ifEmpty { null } ?: return@mapNotNull null
-                ChatBookmark(id, o.str("cwd") ?: "", o.str("title"), o.long("savedAt") ?: 0L)
+                ChatBookmark(id, o.str("cwd") ?: "", o.str("title"), o.long("savedAt") ?: 0L, o.str("agentId")?.ifEmpty { null })
             } ?: emptyList()
         } catch (e: Exception) {
             emptyList()

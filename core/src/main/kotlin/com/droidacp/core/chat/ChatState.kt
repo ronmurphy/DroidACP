@@ -8,7 +8,9 @@ import com.droidacp.core.acp.ContentBlock
 import com.droidacp.core.acp.Implementation
 import com.droidacp.core.acp.PermissionOption
 import com.droidacp.core.acp.OpenElsewhere
+import com.droidacp.core.acp.PlasmaAgent
 import com.droidacp.core.acp.PlasmaHello
+import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.Plan
 import com.droidacp.core.acp.SessionMode
@@ -110,6 +112,21 @@ data class TabletUse(
     }
 }
 
+/**
+ * A tab PlasmaLLM opened for another agent, whose agent then didn't start a chat (protocol
+ * 15): it stays open on the computer, showing the problem, and it's the tab in front, so the
+ * phone shows this instead of a chat until the tab is closed or another chat opens.
+ */
+data class TabProblem(
+    /** The tab, for `close_tab`; null if PlasmaLLM didn't say (it then can't be closed from here). */
+    val tabId: String?,
+    val agentName: String,
+    /** PlasmaLLM's words for what went wrong, e.g. "The agent exited (code 1)." */
+    val message: String,
+    /** The agent needs signing in, which happens on the computer for now. */
+    val signIn: Boolean,
+)
+
 data class UsageInfo(val used: Long, val size: Long, val costAmount: Double?, val costCurrency: String?) {
     val fraction: Float get() = if (size > 0) (used.toFloat() / size).coerceIn(0f, 1f) else 0f
 }
@@ -176,6 +193,15 @@ data class ChatState(
     val tabletProgress: String? = null,
     /** The connection dropped, and DroidACP will connect again by itself shortly (the tablet's relay). */
     val reconnecting: Boolean = false,
+    /** The agents a new PlasmaLLM tab can run (protocol 15), as last listed; null until asked. */
+    val plasmaAgents: List<PlasmaAgent>? = null,
+    val loadingAgents: Boolean = false,
+    /** Why the last listing of [plasmaAgents] failed. */
+    val agentsError: String? = null,
+    /** A new tab with this agent is opening on the computer (protocol 15); its first start may download it. */
+    val startingAgent: PlasmaAgent? = null,
+    /** The new tab's agent didn't start a chat; see [TabProblem]. */
+    val tabProblem: TabProblem? = null,
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected
@@ -221,8 +247,61 @@ data class ChatState(
     /** The other PlasmaLLM tab that has [sessionId] open, if one does. */
     fun tabWith(sessionId: String): PlasmaTab? = otherTabs.firstOrNull { it.sessionId == sessionId }
 
+    /** PlasmaLLM's tabs can run other agents than Claude, opened from here (protocol 15). */
+    val offersAgents: Boolean get() = isConnected && (plasmaLlm?.protocol ?: 0) >= PlasmaLlm.AGENTS
+
+    /** The PlasmaLLM tab whose chat is shown here, if its state lists it. */
+    val shownTab: PlasmaTab? get() = sessionId?.let { id -> plasmaLlm?.tabs?.firstOrNull { it.sessionId == id } }
+
+    /** The tab in front on the computer: `session/list` and `session/load` go to its agent. */
+    val frontTab: PlasmaTab? get() = plasmaLlm?.tabs?.firstOrNull { it.front }
+
+    /**
+     * Tabs with no chat (protocol 15): one starting its agent, or one whose agent couldn't
+     * start. They can only be closed from here.
+     */
+    val tabsWithoutChat: List<PlasmaTab>
+        get() = if (!offersAgents) emptyList() else plasmaLlm?.tabs.orEmpty().filter { it.sessionId.isEmpty() && it.tabId != null }
+
+    /**
+     * The agent of the tab in front (protocol 15), whose chats the Chats panel lists: null
+     * when PlasmaLLM doesn't say, as before protocol 15, when every tab ran Claude.
+     */
+    val frontAgentId: String? get() = if (offersAgents) frontTab?.agentId else null
+
+    /**
+     * The agent whose tab must be in front to open [bookmark] (protocol 15), when the tab in front
+     * runs another: `session/load` goes to that tab's agent, and Claude can't open Codex's chats.
+     * A bookmark saved before is Claude's. Null when it opens as it is, also when another tab
+     * has it open (opening it brings that tab to the front).
+     */
+    fun agentNeededFor(bookmark: ChatBookmark): String? {
+        val front = frontAgentId ?: return null
+        if (tabWith(bookmark.sessionId) != null) return null
+        return (bookmark.agentId ?: PlasmaLlm.CLAUDE).takeIf { it != front }
+    }
+
+    /** A tab in the back with a chat whose agent is [agentId], to bring to the front for its chats. */
+    fun tabRunning(agentId: String): PlasmaTab? = otherTabs.firstOrNull { it.agentId == agentId && it.tabId != null }
+
+    /** [tab]'s agent in words, if PlasmaLLM says which it is (protocol 15). */
+    fun agentLabel(tab: PlasmaTab): String? = tab.agentLabel(plasmaAgents)
+
+    /** The name of the agent with [agentId], from the list if it was fetched. */
+    fun nameOfAgent(agentId: String): String =
+        plasmaAgents?.firstOrNull { it.id == agentId }?.name
+            ?: plasmaLlm?.tabs?.firstOrNull { it.agentId == agentId }?.let(::agentLabel)
+            ?: if (agentId == PlasmaLlm.CLAUDE) "Claude" else agentId
+
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
     val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"
+
+    /**
+     * Who the open chat is with: [agentName], or for a PlasmaLLM tab running another agent than
+     * Claude (protocol 15), that agent ("Codex").
+     */
+    val chatAgentName: String
+        get() = shownTab?.takeIf { offersAgents && it.agentId != null && it.agentId != PlasmaLlm.CLAUDE }?.let(::agentLabel) ?: agentName
 
     /**
      * The open chat's folder. For PlasmaLLM it's the folder open there, as its state

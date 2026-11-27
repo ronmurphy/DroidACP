@@ -187,6 +187,33 @@ before 8) every switch mid-turn asks, as before. The Chats panel lists
 working ones), and marks those chats in the folder list and bookmarks
 (`tabWith`).
 
+PlasmaLLM 15 runs other agents than Claude, one per tab (Codex, GitHub
+Copilot, the ACP Registry's others, the user's own). `PlasmaAgent` is an entry
+of `_plasmallm/agents`, asked again each time the Chats panel opens
+(`AgentController.refreshAgents`, into `ChatState.plasmaAgents`). "New tab
+with…" (`AgentPicker.kt`) lists them in PlasmaLLM's order, greys out the ones
+that can't start with their `why`, and for one PlasmaLLM downloads (npx, uvx)
+asks once per agent and version (`AgentApprovals`). `newAgentTab` sends
+`session/new` with `PlasmaLlm.newTabMeta`: the chat shown goes on in its own
+tab, so nothing is cancelled and nothing asks, and the screen says "Starting
+Codex…" (`ChatState.startingAgent`) until the answer, which can take minutes
+on a first download. Each of `tabs` now has `agentId`, `tabId` and
+`tabletTools`. A state whose chat is empty (a tab starting its agent) still
+updates the tabs. An error after the tab opened carries its `tabId`. The tab
+stays open on the computer, in front, so the phone shows `TabProblem` (sign in
+on the computer, or Close) and sets `host` to null, so it doesn't load the old
+chat back, which would bring Claude's tab to the front. An error before a tab
+opened (`agent_unavailable`) leaves the computer where it was: the phone goes
+back to that chat with a note. `closeTab` returns `TabClose` (`Busy` is asked
+about, then sent with `force`), and `showTab` brings a tab to the front. Each
+agent keeps its own chats, and `session/list` and `load` go to the front tab's
+agent. So the Chats list is listed again when that agent changes
+(`relistIfAgentChanged`). A bookmark keeps its `agentId` (none: Claude's), and
+`ChatState.agentNeededFor` sends a bookmark of another agent's chat to that
+agent's tab first, instead of having the wrong agent call it gone.
+`chatAgentName` names a non-Claude tab's agent ("Message Codex…"). Claude's
+tabs read as before.
+
 PlasmaLLM 5 passes on turns from outside it, for a chat with Remote Control
 on: a message typed in the Claude app, or a turn Claude starts by itself. They
 come as any turn sent from elsewhere (`started`, maybe no prompt chunk, the
