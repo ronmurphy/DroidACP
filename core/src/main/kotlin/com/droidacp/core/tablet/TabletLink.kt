@@ -65,6 +65,11 @@ data class TabletStatus(
     val control: String? = null,
     /** Why, e.g. `tabdesk` or `caller` for `stopped`, `lapsed` for `revoked`. */
     val reason: String? = null,
+    /**
+     * TabDesk takes a message over [TabletRelay.MAX_SEND_CHARS] through a pipe (`sendStream`,
+     * its interface version 2, plan T13): only then can the shared folder's chunks go to it.
+     */
+    val streams: Boolean = false,
 ) {
     enum class Reach {
         /** Not wanted, so not bound. */

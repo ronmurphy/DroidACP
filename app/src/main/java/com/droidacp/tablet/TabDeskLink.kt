@@ -40,7 +40,9 @@ import java.util.concurrent.Executors
  * DroidACP's connection to TabDesk's agent service, as TabDesk's `docs/agent-control.md`
  * (Part 1) describes it: bind `dev.tabdesk.action.AGENT`, check `version()` is 1,
  * `connect()` the callback, then `send` MCP messages and take their answers as `reply` (up
- * to 32 Ki characters) or `replyStream` (a pipe, read to its end).
+ * to 32 Ki characters) or `replyStream` (a pipe, read to its end). A message over 32 Ki
+ * characters (the shared folder's chunks, plan D17) goes as `sendStream`, written into a
+ * pipe on a thread of its own, when `status()` says TabDesk takes it (`send_stream`).
  *
  * The two-way calls (`version`, `status`, `connect`) and the binding run on one worker
  * thread, never the main thread; `send`, `cancel`, `stop` and `resume` are one-way.
@@ -55,6 +57,9 @@ class TabDeskLink(context: Context) : TabletLink {
 
     /** Reading answers that come as a pipe, which can take a moment. */
     private val readers = Executors.newCachedThreadPool { Thread(it, "TabDesk answer") }
+
+    /** Writing big messages into a pipe, never on the caller's thread. */
+    private val writers = Executors.newCachedThreadPool { Thread(it, "TabDesk message") }
 
     private var wanted = false // worker thread only
     private var connection: ServiceConnection? = null // worker thread only
@@ -130,7 +135,7 @@ class TabDeskLink(context: Context) : TabletLink {
         if (pending.putIfAbsent(id, answer) != null) throw RpcException(RpcErrorCodes.INVALID_PARAMS, "A call with that id is already running")
         try {
             try {
-                s.send(id, message)
+                if (message.length > TabletRelay.MAX_SEND_CHARS) stream(s, id, message, answer) else s.send(id, message)
             } catch (e: RemoteException) {
                 throw RpcException(PlasmaLlm.TABLET_UNAVAILABLE, "TabDesk can't be reached")
             }
@@ -141,6 +146,36 @@ class TabDeskLink(context: Context) : TabletLink {
             throw e
         } finally {
             pending.remove(id, answer)
+        }
+    }
+
+    /**
+     * [message] through a pipe (`sendStream`): written as UTF-8 on a writer thread, then closed.
+     * TabDesk answers as for `send`. If the write fails, TabDesk closed its end (it stalled,
+     * was cancelled, or went away) and won't answer, so the call fails here (-33002). The
+     * relay has checked that TabDesk takes it and that it's under 2 MiB.
+     */
+    private fun stream(s: IAgentService, id: String, message: String, answer: CompletableDeferred<String>) {
+        val (read, write) = try {
+            ParcelFileDescriptor.createPipe()
+        } catch (e: IOException) {
+            throw RpcException(PlasmaLlm.TABLET_FAILED, "DroidACP couldn't open a pipe to TabDesk")
+        }
+        try {
+            s.sendStream(id, read)
+        } catch (e: RemoteException) {
+            closeQuietly(write)
+            throw e
+        } finally {
+            // TabDesk has its own copy of the read end now.
+            closeQuietly(read)
+        }
+        writers.execute {
+            try {
+                ParcelFileDescriptor.AutoCloseOutputStream(write).use { it.write(message.toByteArray(Charsets.UTF_8)) }
+            } catch (e: IOException) {
+                if (pending.remove(id, answer)) answer.completeExceptionally(RpcException(PlasmaLlm.TABLET_FAILED, "The message didn't reach TabDesk whole"))
+            }
         }
     }
 
@@ -288,6 +323,7 @@ class TabDeskLink(context: Context) : TabletLink {
                     helper = json.optString("helper").ifEmpty { null },
                     name = json.optString("tablet").ifBlank { null },
                     control = it.control ?: json.optString("control").ifEmpty { null },
+                    streams = json.optBoolean("send_stream", false),
                 )
             }
         }

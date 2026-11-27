@@ -230,6 +230,10 @@ starts, so the tablet works in chats started after both are on.
   and after the tablet restarts (once it's unlocked the first time), if it was connected
   then. Disconnecting by hand stops both. Turning the setting on offers to let DroidACP
   stay connected in the background.
+- **Files**: when the agent copies a file to or from the tablet's shared `TabDeskAgent`
+  folder (PlasmaLLM's own file tools, through TabDesk), the pieces pass through DroidACP
+  on the tablet, and every device shows how far it has got on the tool's card and in the
+  notification ("Copying report.pdf to the tablet: 3 of 8 MB").
 - On any device, for any agent, the agent's form offers **Let DroidACP run in the
   background** (Android's own battery dialog) until it's allowed, so the connection and
   its notifications aren't stopped while the screen is off.

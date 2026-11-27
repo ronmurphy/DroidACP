@@ -31,5 +31,8 @@ interface Transport {
     /** Queue a message. Returns false if the transport is closed. */
     fun send(text: String): Boolean
 
+    /** Bytes queued and not yet sent, where the transport can tell (a WebSocket); else 0. */
+    val queuedBytes: Long get() = 0L
+
     fun close()
 }

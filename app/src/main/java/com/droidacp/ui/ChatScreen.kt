@@ -458,7 +458,11 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                 is ChatItem.User -> UserBubble(item)
                 is ChatItem.Agent -> AgentMessage(item)
                 is ChatItem.Thought -> ThoughtView(item, live = state.busy && item === state.items.lastOrNull())
-                is ChatItem.Tool -> ToolCallCard(item.call, waitingElsewhere = item.call.id in state.waitingElsewhere)
+                is ChatItem.Tool -> ToolCallCard(
+                    item.call,
+                    waitingElsewhere = item.call.id in state.waitingElsewhere,
+                    progress = state.progressOf(item.call),
+                )
                 is ChatItem.Note -> NoteView(item)
             }
         }
