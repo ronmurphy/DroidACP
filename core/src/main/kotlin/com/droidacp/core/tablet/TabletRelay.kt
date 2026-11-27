@@ -138,7 +138,23 @@ class TabletRelay(
             if (inner is JsonObject) put("params", inner)
         }.toString()
 
-        val answer = coroutineScope {
+        val answer = try {
+            sendTracked(requestId, id, message)
+        } catch (e: PausedOnTablet) {
+            // TabDesk dropped the call when it paused and answers none. A tool call gets TabDesk's
+            // own refusal, which the agent reads; anything else ends as cancelled.
+            if (method == TOOLS_CALL) return buildJsonObject { put("result", TabletStatus.pausedRefusal(e.reason)) }
+            throw RpcException(RpcErrorCodes.REQUEST_CANCELLED, "Paused on the tablet")
+        }
+        if (answer.length > MAX_ANSWER_CHARS) {
+            throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer is too big to pass on (over ${MAX_ANSWER_CHARS / (1024 * 1024)} MiB)")
+        }
+        return envelope(answer)
+    }
+
+    /** Sends [message] as Binder call [id], listed under [requestId] while it runs; TabDesk's answer. */
+    private suspend fun sendTracked(requestId: String, id: String, message: String): String =
+        coroutineScope {
             val sent = async(start = CoroutineStart.LAZY) { link.send(id, message) }
             if (!track(requestId, sent)) {
                 sent.cancel()
@@ -165,11 +181,6 @@ class TabletRelay(
                 untrack(requestId, sent)
             }
         }
-        if (answer.length > MAX_ANSWER_CHARS) {
-            throw RpcException(PlasmaLlm.TABLET_FAILED, "TabDesk's answer is too big to pass on (over ${MAX_ANSWER_CHARS / (1024 * 1024)} MiB)")
-        }
-        return envelope(answer)
-    }
 
     // The map and the count change together, so the count shown is never one already gone.
     private fun track(requestId: String, sent: Deferred<String>): Boolean = synchronized(running) {
@@ -196,6 +207,9 @@ class TabletRelay(
     }
 
     companion object {
+        /** MCP's method for a tool call, the only one answered with a refusal when TabDesk pauses. */
+        const val TOOLS_CALL = "tools/call"
+
         /** TabDesk takes Binder ids of up to this many characters. */
         const val MAX_ID_CHARS = 200
 

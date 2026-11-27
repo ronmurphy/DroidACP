@@ -3,6 +3,12 @@ package com.droidacp.core.tablet
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * DroidACP's connection to TabDesk's agent service on this tablet, as the relay sees it
@@ -144,6 +150,28 @@ data class TabletStatus(
 
         /** `stopped`'s reason when Stop was pressed on TabDesk's indicator or notification. */
         const val BY_TABDESK = "tabdesk"
+
+        /** `paused`'s reason: the user touched the screen while the agent was using it (tool list 2). */
+        const val TOUCHED = "touched"
+
+        /**
+         * TabDesk's own `paused` refusal (plan D11), for a tool call it dropped when it paused: an
+         * MCP result the agent reads and can tell the user about. [reason] is the pause's.
+         */
+        fun pausedRefusal(reason: String): JsonObject = buildJsonObject {
+            putJsonArray("content") {
+                add(buildJsonObject {
+                    put("type", "text")
+                    put("text", "Refused (paused): " + if (reason == TOUCHED) {
+                        "The user touched the screen. The agent can go on after the user's next message."
+                    } else {
+                        "TabDesk paused the agent. It can go on after the user's next message."
+                    })
+                })
+            }
+            put("isError", true)
+            putJsonObject("_meta") { put("dev.tabdesk/refused", "paused") }
+        }
     }
 }
 
@@ -170,3 +198,10 @@ class Tablet(
         _held.value = on
     }
 }
+
+/**
+ * How a [TabletLink] fails the calls TabDesk dropped when it paused (control `paused`, plan
+ * D11): TabDesk answers none of them. [TabletRelay] answers a tool call with TabDesk's own
+ * refusal ([TabletStatus.pausedRefusal]), anything else as cancelled.
+ */
+class PausedOnTablet(val reason: String) : Exception("Paused on the tablet ($reason)")

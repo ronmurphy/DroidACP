@@ -6,10 +6,12 @@ import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
+import com.droidacp.core.rpc.RpcErrorCodes
 import com.droidacp.core.rpc.RpcException
 import com.droidacp.core.rpc.long
 import com.droidacp.core.rpc.obj
 import com.droidacp.core.rpc.str
+import com.droidacp.core.tablet.PausedOnTablet
 import com.droidacp.core.tablet.Tablet
 import com.droidacp.core.tablet.TabletLink
 import com.droidacp.core.tablet.TabletRelay
@@ -29,8 +31,10 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -501,6 +505,47 @@ class TabletRelayTest {
         delay(200)
         assertFalse(c.state.value.cancelling, "this chat goes on")
         return host.requests.filter { it.first == "session/cancel" }.map { it.second.str("sessionId") }
+    }
+
+    @Test
+    fun aTouchOnTheScreenAnswersTheDroppedCallAndEndsTheTurn() = runBlocking {
+        val c = controller()
+        c.connect(profile)
+        c.joined("chat-a")
+        c.declared()
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        c.waitFor("the laptop's turn") { it.busy }
+        val running = host.mcpMessage(41, screenCall())
+        tabdesk.nextSent()
+        val listing = host.mcpMessage(42, buildJsonObject {
+            put("serverId", SERVER_ID)
+            put("requestId", "mcp-request:8")
+            put("method", "tools/list")
+            put("sessionId", "chat-a")
+        })
+        tabdesk.nextSent()
+
+        // D11: TabDesk answers nothing, so a tool call gets TabDesk's own `paused` refusal…
+        val resumes = tabdesk.resumes.get()
+        tabdesk.pauseOnTablet()
+        val answer = withTimeout(5_000) { running.await() }.obj("result")?.obj("result")
+        assertEquals(true, answer?.get("isError")?.jsonPrimitive?.booleanOrNull, "answer: $answer")
+        assertEquals("paused", answer?.obj("_meta")?.str("dev.tabdesk/refused"))
+        assertTrue(answer.toString().contains("The user touched the screen"))
+        // …and anything else, which a tool's result doesn't fit, ends as cancelled.
+        assertEquals(RpcErrorCodes.REQUEST_CANCELLED.toLong(), withTimeout(5_000) { listing.await() }.errorCode())
+        assertFalse("touched" in TabletStatus.pausedRefusal("other").toString(), "another pause isn't called a touch")
+
+        // The turn ends, as for a Stop, and the bar says why.
+        waitUntil("session/cancel") { host.requests.any { it.first == "session/cancel" && it.second.str("sessionId") == "chat-a" } }
+        c.waitFor("paused") { it.cancelling && it.tablet?.paused == true }
+
+        // The user's next message lets it go on.
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "ended"); put("stopReason", "cancelled") })
+        host.notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", "chat-a"); put("state", "started"); put("by", "user") })
+        waitUntil("resume()") { tabdesk.resumes.get() == resumes + 1 }
+        c.waitFor("going on") { it.tablet?.paused == false }
+        assertEquals(1, host.requests.count { it.first == "session/cancel" })
     }
 
     // --- 🛑 hold, until the user lets it go on (D20) ---
@@ -1155,6 +1200,12 @@ class FakeTabDesk : TabletLink {
     fun stopOnTablet() {
         waiting.values.forEach { it.cancel() }
         status.value = status.value.copy(control = TabletStatus.STOPPED, reason = TabletStatus.BY_TABDESK)
+    }
+
+    /** The user touched the screen (tool list 2): TabDesk drops the running calls, which TabDeskLink fails. */
+    fun pauseOnTablet() {
+        waiting.values.forEach { it.completeExceptionally(PausedOnTablet(TabletStatus.TOUCHED)) }
+        status.value = status.value.copy(control = TabletStatus.PAUSED, reason = TabletStatus.TOUCHED)
     }
 
     override fun resume() {

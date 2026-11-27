@@ -16,6 +16,8 @@ import com.droidacp.MainActivity
 import com.droidacp.R
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ConnectionStatus
+import com.droidacp.core.chat.TabletUse
+import com.droidacp.core.chat.tabletAction
 
 object Notifications {
     private const val CHANNEL_CONNECTION = "connection"
@@ -59,18 +61,37 @@ object Notifications {
     fun ongoingText(state: ChatState): String {
         val tablet = state.tablet
         return when {
-            tablet != null && state.isConnected && tablet.inUse -> "The agent is using this tablet"
+            tablet != null && state.isConnected && tablet.paused -> tablet.pausedText
+            tablet != null && state.isConnected && tablet.inUse ->
+                state.tabletAction?.let { "${TabletUse.IN_USE}: $it" } ?: TabletUse.IN_USE
             tablet != null && state.profile?.quietHere == true && state.isConnected -> "Letting the agent use this tablet"
             else -> statusText(state)
         }
     }
 
-    /** The silent, ongoing notification that keeps the foreground service (and connection) alive. */
+    /** [ongoingText] without the action, for the lock screen. */
+    fun publicText(state: ChatState): String =
+        if (state.tablet?.inUse == true && state.isConnected) TabletUse.IN_USE else ongoingText(state)
+
+    /**
+     * The silent, ongoing notification that keeps the foreground service (and connection) alive.
+     * Its public version says only that the agent is using the tablet, not what it taps: Android
+     * shows that one on a lock screen set to hide sensitive content, and the whole one otherwise.
+     */
     fun ongoing(context: Context, state: ChatState): Notification =
         NotificationCompat.Builder(context, CHANNEL_CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_agent)
             .setContentTitle(state.agentName)
             .setContentText(ongoingText(state))
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CHANNEL_CONNECTION)
+                    .setSmallIcon(R.drawable.ic_stat_agent)
+                    .setContentTitle(state.agentName)
+                    .setContentText(publicText(state))
+                    .setSilent(true)
+                    .build(),
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
