@@ -104,9 +104,12 @@ class AcpClient(
         rpc.request("authenticate", buildJsonObject { put("methodId", methodId) })
     }
 
-    /** [mcpServers]: MCP servers offered to the agent for this session (the tablet, to PlasmaLLM). */
-    suspend fun newSession(cwd: String, mcpServers: List<JsonObject> = emptyList()): SessionSetup {
-        val result = rpc.request("session/new", sessionParams(cwd, mcpServers = mcpServers)) as? JsonObject
+    /**
+     * [mcpServers]: MCP servers offered to the agent for this session (the tablet, to PlasmaLLM).
+     * [meta] goes into the params' `_meta` (e.g. [PlasmaLlm.newTabMeta]).
+     */
+    suspend fun newSession(cwd: String, mcpServers: List<JsonObject> = emptyList(), meta: JsonObject? = null): SessionSetup {
+        val result = rpc.request("session/new", sessionParams(cwd, meta = meta, mcpServers = mcpServers)) as? JsonObject
         val sessionId = result?.str("sessionId") ?: throw RpcException(RpcErrorCodes.INTERNAL_ERROR, "Agent did not return a sessionId")
         return SessionSetup.parse(sessionId, result)
     }
@@ -132,6 +135,26 @@ class AcpClient(
      */
     suspend fun closeSession(sessionId: String) {
         rpc.request("session/close", buildJsonObject { put("sessionId", sessionId) })
+    }
+
+    /** PlasmaLLM's agents a new tab can run (protocol 15), in the order to show. */
+    suspend fun plasmaAgents(): List<PlasmaAgent> =
+        PlasmaAgent.parseAll(rpc.request(PlasmaLlm.AGENTS_METHOD, JsonObject(emptyMap())) as? JsonObject)
+
+    /** Bring PlasmaLLM's tab [tabId] to the front (protocol 15); the devices follow it. */
+    suspend fun showTab(tabId: String) {
+        rpc.request(PlasmaLlm.SHOW_TAB, buildJsonObject { put("tabId", tabId) })
+    }
+
+    /** Close PlasmaLLM's tab [tabId] (protocol 15); [force] also while its agent works, cutting the turn. */
+    suspend fun closeTab(tabId: String, force: Boolean = false) {
+        rpc.request(
+            PlasmaLlm.CLOSE_TAB,
+            buildJsonObject {
+                put("tabId", tabId)
+                if (force) put("force", true)
+            },
+        )
     }
 
     suspend fun listSessions(cwd: String?, maxPages: Int = 5): List<SessionSummary> {

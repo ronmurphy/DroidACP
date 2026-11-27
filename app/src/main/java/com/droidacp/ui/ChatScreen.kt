@@ -75,6 +75,9 @@ import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
 import com.droidacp.core.chat.ChatView
+import com.droidacp.core.chat.TabClose
+import com.droidacp.core.chat.TabProblem
+import com.droidacp.core.acp.PlasmaAgent
 import com.droidacp.core.people.stripPeople
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.toolProgressNow
@@ -98,7 +101,9 @@ interface ChatActions {
 
     /** Whether the agent still lists [sessionId] in [cwd] (null: it couldn't be checked). */
     suspend fun chatExists(sessionId: String, cwd: String): Boolean?
-    fun toggleBookmark(sessionId: String, cwd: String, title: String?)
+
+    /** Bookmark the chat, or remove its bookmark. [agentId]: PlasmaLLM's agent it's with (protocol 15). */
+    fun toggleBookmark(sessionId: String, cwd: String, title: String?, agentId: String?)
     fun removeBookmark(sessionId: String)
     fun forgetFolder(path: String)
     fun authenticate(methodId: String)
@@ -106,6 +111,21 @@ interface ChatActions {
 
     /** About a chat another Claude has open ([ChatState.openElsewhere]); null stays on the computer's chat. */
     fun answerOpenElsewhere(choice: OpenElsewhereChoice?)
+
+    /** List the agents a new PlasmaLLM tab can run (protocol 15), into [ChatState.plasmaAgents]. */
+    fun listAgents()
+
+    /** Whether to ask before starting [agent]: PlasmaLLM downloads it, and the user hasn't said yes to this version. */
+    fun mustAskFor(agent: PlasmaAgent): Boolean
+
+    /** A new PlasmaLLM tab with [agent] in [cwd] (null: the front tab's folder); the user said yes, if asked. */
+    fun newAgentTab(agent: PlasmaAgent, cwd: String?)
+
+    /** Close PlasmaLLM's tab [tabId]; [force] also while its agent works. */
+    suspend fun closeTab(tabId: String, force: Boolean): TabClose
+
+    /** Bring PlasmaLLM's tab [tabId] to the front. Null when done, else why not. */
+    suspend fun showTab(tabId: String): String?
 
     /** The composer took the text of a message that couldn't be sent from a notification. */
     fun draftUsed()
@@ -156,6 +176,8 @@ fun ChatScreen(
     fun openChats() {
         chatsOpen = true
         actions.listChats(state.folder)
+        // PlasmaLLM 15: its list of agents can change, so it's asked again each time.
+        if (state.offersAgents) actions.listAgents()
     }
 
     // Switching to another chat while the agent works stops that work: ask first.
@@ -193,7 +215,7 @@ fun ChatScreen(
                             .padding(end = 4.dp),
                     ) {
                         Column(Modifier.weight(1f, fill = false)) {
-                            Text(state.sessionTitle ?: state.agentName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(state.sessionTitle ?: state.chatAgentName, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 text = subtitle(state),
                                 style = MaterialTheme.typography.labelMedium,
@@ -282,7 +304,8 @@ fun ChatScreen(
                 // A chat's history arrives one message at a time: it's built out of sight, and
                 // the list shows once, at its end, instead of racing past as it fills.
                 state.replaying -> CenterMessage(ChatView.openingText(state, developer), progress = true)
-                state.items.isEmpty() && state.startingSession -> CenterMessage("Starting a session…", progress = true)
+                state.items.isEmpty() && state.startingSession -> CenterMessage(startingText(state), progress = true)
+                state.tabProblem != null && state.sessionId == null -> TabProblemPanel(state.tabProblem!!, actions, onChats = ::openChats)
                 state.items.isEmpty() && state.canChat -> EmptyChat(state)
                 else -> MessageList(state, listState, side, developer)
             }
@@ -415,16 +438,16 @@ private fun connectingText(state: ChatState): String {
 private fun stopWarning(state: ChatState, newChat: Boolean): String {
     val plasma = state.plasmaLlm
     return when {
-        plasma == null -> "${state.agentName} is working on this chat. Opening another one stops that work."
+        plasma == null -> "${state.chatAgentName} is working on this chat. Opening another one stops that work."
         // PlasmaLLM 8 lists its tabs, so this is asked only when the chat would be replaced.
         plasma.tabs != null -> {
             val opens = if (newChat) "A new chat opens in this chat's PlasmaLLM tab" else "That chat isn't open in a PlasmaLLM tab, so it opens in this one"
-            "${state.agentName} is working on this chat. $opens, which stops the work here, even if it was started on the " +
+            "${state.chatAgentName} is working on this chat. $opens, which stops the work here, even if it was started on the " +
                 "computer, and drops anything the agent planned to come back to here (its wake_me). Chats open in other tabs " +
                 "don't stop anything."
         }
         else -> {
-            val stops = "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
+            val stops = "${state.chatAgentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
                 "computer, and drops anything the agent planned to come back to in this chat (its wake_me)."
             // PlasmaLLM with tabs: a chat open in another tab comes to the front, and this one goes on in its own.
             if (plasma.protocol >= 4) "$stops If the chat you open is in another PlasmaLLM tab, this one keeps working in its tab instead." else stops
@@ -444,10 +467,12 @@ private fun subtitle(state: ChatState): String {
         state.busy && state.remoteTurn -> "Working (sent from another screen)…"
         state.busy -> "Working…"
         state.replaying -> "Opening the chat…"
+        state.startingAgent != null -> "Starting ${state.startingAgent?.name}…"
         state.startingSession -> "Starting session…"
+        state.tabProblem != null && state.sessionId == null -> "No chat in this tab"
         // The title line shows the chat; this one says where it is.
         else -> listOfNotNull(
-            state.agentName.takeIf { state.sessionTitle != null },
+            state.chatAgentName.takeIf { state.sessionTitle != null },
             state.folder?.let(::shortFolder),
             state.currentModeName,
         ).joinToString(" · ").ifEmpty { "Ready" }
@@ -495,8 +520,8 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp, de
                             // A file being copied, say: on its card in the developer view.
                             !developer && state.toolProgressNow != null -> state.toolProgressNow.orEmpty()
                             // A prompt typed in PlasmaLLM's window or on another device.
-                            state.remoteTurn -> "${state.agentName} is working on a message sent from another screen…"
-                            else -> "${state.agentName} is working…"
+                            state.remoteTurn -> "${state.chatAgentName} is working on a message sent from another screen…"
+                            else -> "${state.chatAgentName} is working…"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -504,6 +529,89 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp, de
                 }
             }
         }
+    }
+}
+
+/** What the screen says while a chat starts: in a new PlasmaLLM tab with an agent (protocol 15), it names it. */
+private fun startingText(state: ChatState): String {
+    val agent = state.startingAgent ?: return "Starting a session…"
+    val download = if (agent.downloads) "\n\nIts first start downloads it, which can take a minute or two." else ""
+    return "Starting ${agent.name} in a new tab on the computer…$download"
+}
+
+/**
+ * The tab in front on the computer is a new one whose agent didn't start a chat ([TabProblem]):
+ * it stays open there showing the problem, so this screen shows it too, with Close.
+ */
+@Composable
+private fun TabProblemPanel(problem: TabProblem, actions: ChatActions, onChats: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    var askForce by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun close(force: Boolean) {
+        val tabId = problem.tabId ?: return
+        closing = true
+        error = null
+        scope.launch {
+            when (val r = actions.closeTab(tabId, force)) {
+                TabClose.Closed -> {}
+                TabClose.Busy -> askForce = true
+                is TabClose.Refused -> error = r.message
+            }
+            closing = false
+        }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.large, modifier = Modifier.widthIn(max = 520.dp)) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (problem.signIn) "Sign in to ${problem.agentName} on the computer" else "${problem.agentName} didn't start",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(problem.message)
+                Text(
+                    if (problem.signIn) {
+                        "Its tab stays open in PlasmaLLM, where you can sign in. Or close it, and this screen goes back to the tab in front."
+                    } else {
+                        "Its tab stays open in PlasmaLLM, showing the problem. Close it, and this screen goes back to the tab in front."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End)) {
+                    TextButton(onClick = onChats) { Text("Chats") }
+                    if (problem.tabId != null) {
+                        Button(onClick = { close(force = false) }, enabled = !closing) { Text("Close the tab") }
+                    }
+                }
+            }
+        }
+    }
+
+    if (askForce) {
+        AlertDialog(
+            onDismissRequest = { askForce = false },
+            title = { Text("Close a working tab?") },
+            text = { Text("${problem.agentName} is working in that tab now. Closing it stops it mid-turn.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    askForce = false
+                    close(force = true)
+                }) { Text("Stop and close") }
+            },
+            dismissButton = { TextButton(onClick = { askForce = false }) { Text("Keep it") } },
+        )
     }
 }
 
@@ -535,7 +643,9 @@ private fun EmptyChat(state: ChatState) {
     ) {
         Text("👋", style = MaterialTheme.typography.displayMedium)
         Spacer(Modifier.height(12.dp))
-        Text("Connected to ${state.agentName}", style = MaterialTheme.typography.titleMedium)
+        // A PlasmaLLM tab with another agent than Claude (protocol 15) names it: "Codex, in Plasma LLM".
+        val who = if (state.chatAgentName != state.agentName) "${state.chatAgentName}, in ${state.agentName}" else state.agentName
+        Text("Connected to $who", style = MaterialTheme.typography.titleMedium)
         val version = state.agent?.version
         if (version != null) Text("version $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))

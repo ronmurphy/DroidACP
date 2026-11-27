@@ -1,10 +1,13 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.droidacp.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -45,9 +48,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.droidacp.R
 import com.droidacp.core.acp.BridgeFolders
+import com.droidacp.core.acp.PlasmaLlm
+import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.chat.ChatBookmark
 import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatState
+import com.droidacp.core.chat.TabClose
 import kotlinx.coroutines.launch
 
 /** Browsing the agent's computer for a folder: who to ask, and how. */
@@ -68,7 +74,9 @@ data class ChatsPanel(
  * The title bar's Chats panel: pick a folder, start a chat there, or open one of its
  * chats or a bookmarked one. Nothing changes until a chat is picked. [onSwitch] runs a
  * switch to a chat (null: a new one), asking first if that stops the agent's work.
- * With PlasmaLLM 8 the other tabs' chats come first: opening one stops nothing.
+ * With PlasmaLLM 8 the other tabs' chats come first: opening one stops nothing. With
+ * PlasmaLLM 15 a new tab can run another agent ([AgentPicker]), each tab says its agent and
+ * can be closed, and a bookmarked chat opens only when its agent's tab is in front.
  */
 @Composable
 fun ChatsSheet(
@@ -87,6 +95,27 @@ fun ChatsSheet(
     var checkFailed by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val isPlasma = state.plasmaLlm != null
+    var picking by remember { mutableStateOf(false) }
+    // A tab being closed, one whose agent works (asked first), and why one didn't close or show.
+    var closing by remember { mutableStateOf<String?>(null) }
+    var closeBusy by remember { mutableStateOf<PlasmaTab?>(null) }
+    var tabError by remember { mutableStateOf<String?>(null) }
+    // A bookmark of a chat with another agent than the front tab's, and that agent.
+    var otherAgent by remember { mutableStateOf<Pair<ChatBookmark, String>?>(null) }
+
+    fun closeTab(tab: PlasmaTab, force: Boolean = false) {
+        val tabId = tab.tabId ?: return
+        closing = tabId
+        tabError = null
+        scope.launch {
+            when (val r = actions.closeTab(tabId, force)) {
+                TabClose.Closed -> {}
+                TabClose.Busy -> closeBusy = tab
+                is TabClose.Refused -> tabError = r.message
+            }
+            closing = null
+        }
+    }
 
     fun look(path: String) {
         folder = path
@@ -102,6 +131,11 @@ fun ChatsSheet(
     // PlasmaLLM start a new one on the computer (and close the one open there), so check
     // the agent's list first. An agent that can't list chats just gets the open.
     fun openBookmark(b: ChatBookmark) {
+        // Only its own agent can open it (PlasmaLLM 15): the front tab's would call it gone.
+        state.agentNeededFor(b)?.let { needed ->
+            otherAgent = b to needed
+            return
+        }
         if (!state.capabilities.listSessions) return openChat(b.sessionId, b.cwd)
         checking = b.sessionId
         checkFailed = null
@@ -129,9 +163,13 @@ fun ChatsSheet(
                 val saved = ChatBookmarks.contains(panel.bookmarks, current)
                 ListItem(
                     headlineContent = { Text(state.sessionTitle ?: "This chat", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(listOfNotNull("Open now", state.folder?.let(::shortFolder)).joinToString(" · ")) },
+                    supportingContent = {
+                        Text(listOfNotNull("Open now", otherThanClaude(state, state.shownTab), state.folder?.let(::shortFolder)).joinToString(" · "))
+                    },
                     trailingContent = {
-                        BookmarkButton(saved) { actions.toggleBookmark(current, state.folder ?: "", state.sessionTitle) }
+                        BookmarkButton(saved) {
+                            actions.toggleBookmark(current, state.folder ?: "", state.sessionTitle, state.shownTab?.agentId ?: state.frontAgentId)
+                        }
                     },
                 )
                 HorizontalDivider()
@@ -147,17 +185,28 @@ fun ChatsSheet(
                     onForget = actions::forgetFolder,
                 )
             }
-            OutlinedButton(
-                onClick = {
-                    onDismiss()
-                    val cwd = folder.ifBlank { null }
-                    onSwitch(null) { actions.newChat(cwd) }
-                },
-                enabled = state.isConnected && !state.startingSession,
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, Modifier.size(18.dp))
-                Text(if (panel.showFolders) "  New chat in this folder" else "  New chat")
+                OutlinedButton(
+                    onClick = {
+                        onDismiss()
+                        val cwd = folder.ifBlank { null }
+                        onSwitch(null) { actions.newChat(cwd) }
+                    },
+                    enabled = state.isConnected && !state.startingSession,
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, Modifier.size(18.dp))
+                    Text(if (panel.showFolders) "  New chat in this folder" else "  New chat")
+                }
+                // PlasmaLLM 15: a tab of its own, with Claude or another agent; nothing here stops.
+                if (state.offersAgents) {
+                    OutlinedButton(onClick = { picking = true }, enabled = !state.startingSession) {
+                        Icon(Icons.Default.Add, contentDescription = null, Modifier.size(18.dp))
+                        Text("  New tab with…")
+                    }
+                }
             }
             if (isPlasma) {
                 Text(
@@ -170,8 +219,10 @@ fun ChatsSheet(
 
             LazyColumn(Modifier.heightIn(max = 560.dp)) {
                 val tabs = state.otherTabs
-                if (tabs.isNotEmpty()) {
+                val chatless = state.tabsWithoutChat
+                if (tabs.isNotEmpty() || chatless.isNotEmpty()) {
                     item(key = "tabs") { SectionHeader("In PlasmaLLM's other tabs") }
+                    tabError?.let { item(key = "close-error") { Hint(it, error = true) } }
                     items(tabs, key = { "t:" + it.sessionId }) { tab ->
                         ListItem(
                             leadingContent = {
@@ -183,9 +234,41 @@ fun ChatsSheet(
                             },
                             headlineContent = { Text(tab.title ?: "Untitled chat", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             supportingContent = {
-                                Text(listOfNotNull(tab.cwd.ifEmpty { null }?.let(::shortFolder), if (tab.busy) "working" else "idle").joinToString(" · "))
+                                Text(
+                                    listOfNotNull(
+                                        otherThanClaude(state, tab),
+                                        tab.cwd.ifEmpty { null }?.let(::shortFolder),
+                                        if (tab.busy) "working" else "idle",
+                                        "no tablet".takeIf { tab.tabletTools == false && state.plasmaLlm?.tabletTools == true },
+                                    ).joinToString(" · "),
+                                )
                             },
+                            trailingContent = { CloseTabButton(state, tab, closing) { closeTab(tab) } },
                             modifier = Modifier.clickable(enabled = state.canSwitchChats) { openChat(tab.sessionId, tab.cwd.ifEmpty { null }) },
+                        )
+                    }
+                    // A tab starting its agent, or one whose agent couldn't start: only closed from here.
+                    items(chatless, key = { "n:" + it.tabId }) { tab ->
+                        val agent = state.agentLabel(tab) ?: "Its agent"
+                        ListItem(
+                            leadingContent = {
+                                if (tab.starting) {
+                                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                } else {
+                                    Box(Modifier.size(24.dp))
+                                }
+                            },
+                            headlineContent = { Text("A new tab with $agent", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = {
+                                Text(
+                                    listOfNotNull(
+                                        tab.cwd.ifEmpty { null }?.let(::shortFolder),
+                                        if (tab.starting) "starting" else "no chat; the computer says why",
+                                        "in front".takeIf { tab.front },
+                                    ).joinToString(" · "),
+                                )
+                            },
+                            trailingContent = { CloseTabButton(state, tab, closing) { closeTab(tab) } },
                         )
                     }
                 }
@@ -220,7 +303,9 @@ fun ChatsSheet(
                 }
 
                 item(key = "listed") {
-                    SectionHeader(if (panel.showFolders && folder.isNotBlank()) "Chats in ${shortFolder(folder)}" else "Chats")
+                    // Each agent keeps its own chats: the list is the front tab's agent's (PlasmaLLM 15).
+                    val whose = state.frontAgentId?.takeIf { it != PlasmaLlm.CLAUDE }?.let { "${state.nameOfAgent(it)}'s chats" } ?: "Chats"
+                    SectionHeader(if (panel.showFolders && folder.isNotBlank()) "$whose in ${shortFolder(folder)}" else whose)
                 }
                 if (panel.browse != null && state.capabilities.listSessions) {
                     // The list is Claude Code's, so it includes chats started in a terminal there.
@@ -248,7 +333,7 @@ fun ChatsSheet(
                             supportingContent = {
                                 Text(listOfNotNull(session.updatedAt?.replace('T', ' ')?.take(16), "open now".takeIf { isOpen }, inTab(state, session.sessionId)).joinToString(" · "))
                             },
-                            trailingContent = { BookmarkButton(saved) { actions.toggleBookmark(session.sessionId, cwd, session.title) } },
+                            trailingContent = { BookmarkButton(saved) { actions.toggleBookmark(session.sessionId, cwd, session.title, state.frontAgentId) } },
                             modifier = Modifier.clickable(enabled = !isOpen && state.canSwitchChats) { openChat(session.sessionId, cwd) },
                         )
                     }
@@ -274,6 +359,79 @@ fun ChatsSheet(
                 }) { Text("Remove") }
             },
             dismissButton = { TextButton(onClick = { gone = null }) { Text("Keep") } },
+        )
+    }
+
+    if (picking) {
+        AgentPicker(
+            state = state,
+            folder = folder,
+            actions = actions,
+            onStarted = {
+                picking = false
+                onDismiss()
+            },
+            onDismiss = { picking = false },
+        )
+    }
+
+    closeBusy?.let { tab ->
+        val agent = state.agentLabel(tab) ?: "Its agent"
+        AlertDialog(
+            onDismissRequest = { closeBusy = null },
+            title = { Text("Close a working tab?") },
+            text = { Text("$agent is working in \"${tab.title ?: "Untitled chat"}\". Closing the tab stops it mid-turn.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    closeBusy = null
+                    closeTab(tab, force = true)
+                }) { Text("Stop and close") }
+            },
+            dismissButton = { TextButton(onClick = { closeBusy = null }) { Text("Keep it") } },
+        )
+    }
+
+    otherAgent?.let { (b, needed) ->
+        val name = state.nameOfAgent(needed)
+        val front = state.frontAgentId?.let(state::nameOfAgent) ?: "another agent"
+        val tab = state.tabRunning(needed)
+        val startable = state.plasmaAgents?.firstOrNull { it.id == needed && it.ready }?.takeIf { tab == null && !actions.mustAskFor(it) }
+        AlertDialog(
+            onDismissRequest = { otherAgent = null },
+            title = { Text("A chat with $name") },
+            text = {
+                Text(
+                    "\"${b.title ?: "Untitled chat"}\" is a chat with $name, and the tab in front on the computer runs $front. " +
+                        when {
+                            tab != null -> "Bring $name's tab to the front, then open the bookmark again."
+                            startable != null -> "Open a tab with $name, then open the bookmark again."
+                            else -> "Open a tab with $name first (New tab with…), then open the bookmark again."
+                        },
+                )
+            },
+            confirmButton = {
+                when {
+                    tab?.tabId != null -> TextButton(onClick = {
+                        otherAgent = null
+                        val tabId = tab.tabId!!
+                        scope.launch {
+                            val why = actions.showTab(tabId)
+                            if (why == null) onDismiss() else tabError = why
+                        }
+                    }) { Text("Show $name's tab") }
+                    startable != null -> TextButton(onClick = {
+                        otherAgent = null
+                        onDismiss()
+                        actions.newAgentTab(startable, b.cwd.ifEmpty { null })
+                    }) { Text("New tab with $name") }
+                    else -> TextButton(onClick = { otherAgent = null }) { Text("OK") }
+                }
+            },
+            dismissButton = if (tab?.tabId != null || startable != null) {
+                { TextButton(onClick = { otherAgent = null }) { Text("Cancel") } }
+            } else {
+                null
+            },
         )
     }
 
@@ -351,6 +509,23 @@ private fun BookmarkButton(saved: Boolean, onToggle: () -> Unit) {
         }
     }
 }
+
+/** A tab's Close button (PlasmaLLM 15), or its progress while it closes. */
+@Composable
+private fun CloseTabButton(state: ChatState, tab: PlasmaTab, closing: String?, onClose: () -> Unit) {
+    if (!state.offersAgents || tab.tabId == null) return
+    if (closing == tab.tabId) {
+        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+    } else {
+        IconButton(onClick = onClose, enabled = closing == null) {
+            Icon(Icons.Default.Close, contentDescription = "Close this tab on the computer", Modifier.size(18.dp))
+        }
+    }
+}
+
+/** [tab]'s agent, when it isn't Claude (PlasmaLLM 15): Claude's tabs read as they always did. */
+private fun otherThanClaude(state: ChatState, tab: PlasmaTab?): String? =
+    tab?.takeIf { state.offersAgents && it.agentId != null && it.agentId != PlasmaLlm.CLAUDE }?.let(state::agentLabel)
 
 /** "in another tab" or "working in another tab" for a chat another PlasmaLLM tab has open. */
 private fun inTab(state: ChatState, sessionId: String): String? =

@@ -9,6 +9,7 @@ import com.droidacp.core.acp.OpenElsewhere
 import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.acp.PermissionOutcome
 import com.droidacp.core.acp.PermissionRequest
+import com.droidacp.core.acp.PlasmaAgent
 import com.droidacp.core.acp.PlasmaChat
 import com.droidacp.core.acp.PlasmaEvent
 import com.droidacp.core.acp.PlasmaLlm
@@ -20,6 +21,7 @@ import com.droidacp.core.acp.TransportListener
 import com.droidacp.core.acp.WebSocketTransport
 import com.droidacp.core.acp.plasmaReason
 import com.droidacp.core.acp.plasmaSessionId
+import com.droidacp.core.acp.plasmaTabId
 import com.droidacp.core.rpc.ConnectionClosedException
 import com.droidacp.core.rpc.RpcErrorCodes
 import com.droidacp.core.rpc.RpcException
@@ -65,6 +67,18 @@ sealed interface AgentEvent {
 
 /** An image to attach to a prompt (already base64 encoded). */
 data class ImageAttachment(val mimeType: String, val base64: String)
+
+/** How closing a PlasmaLLM tab went ([AgentController.closeTab]). */
+sealed interface TabClose {
+    /** Closed (or already gone). */
+    data object Closed : TabClose
+
+    /** Its agent is working: closing it anyway cuts the turn, so the user is asked first. */
+    data object Busy : TabClose
+
+    /** Not closed, and why, in words for the user. */
+    data class Refused(val message: String) : TabClose
+}
 
 /**
  * Makes the right [Transport] for a profile: a WebSocket for a bridge agent, an
@@ -351,6 +365,87 @@ class AgentController(
         _state.update { resetSession(it, clearTranscript = true) }
         val meta = choice.wire?.let(PlasmaLlm::openElsewhereMeta)
         l.scope.launch { l.startSession(target = asked.sessionId, preferLoad = true, cwd = asked.cwd, meta = meta) }
+    }
+
+    // ------------------------------------------------------------------
+    // PlasmaLLM's tabs with other agents (protocol 15)
+    // ------------------------------------------------------------------
+
+    /** List the agents a new PlasmaLLM tab can run, for the picker: asked again each time it opens. */
+    fun refreshAgents() {
+        val l = link ?: return
+        if (!l.plasma || !_state.value.offersAgents) return
+        _state.update { it.copy(loadingAgents = true, agentsError = null) }
+        l.scope.launch {
+            try {
+                val agents = l.client.plasmaAgents()
+                _state.update { it.copy(plasmaAgents = agents, loadingAgents = false) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _state.update { it.copy(loadingAgents = false, agentsError = "Couldn't list PlasmaLLM's agents: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * Open a new PlasmaLLM tab with [agent] in [cwd] (empty: the front tab's folder), in front,
+     * and show its new chat here. The chat shown now goes on in its own tab, so nothing stops,
+     * even mid-turn. An agent downloaded on its first start can take a minute or more.
+     */
+    fun newAgentTab(agent: PlasmaAgent, cwd: String? = null) {
+        val l = link ?: return
+        if (!l.plasma || !_state.value.offersAgents) return
+        leave(l)
+        _state.update { resetSession(it, clearTranscript = true).copy(openElsewhere = null, startingAgent = agent) }
+        l.scope.launch { l.startSession(target = null, preferLoad = false, cwd = cwd?.trim().orEmpty(), agent = agent) }
+    }
+
+    /**
+     * Close PlasmaLLM's tab [tabId]. [force] closes it while its agent works, which cuts its
+     * turn: ask the user first ([TabClose.Busy] says it's working).
+     */
+    suspend fun closeTab(tabId: String, force: Boolean = false): TabClose {
+        val l = link ?: return TabClose.Refused("DroidACP isn't connected to PlasmaLLM.")
+        if (!l.plasma || !_state.value.offersAgents) return TabClose.Refused("This PlasmaLLM can't close its tabs from here.")
+        return try {
+            l.client.closeTab(tabId, force)
+            closed(tabId)
+            TabClose.Closed
+        } catch (e: RpcException) {
+            when (e.plasmaReason) {
+                PlasmaLlm.Reason.BUSY -> TabClose.Busy
+                // Closed meanwhile, on the computer or another device.
+                PlasmaLlm.Reason.NO_TAB -> TabClose.Closed.also { closed(tabId) }
+                PlasmaLlm.Reason.LAST_TAB -> TabClose.Refused("That's PlasmaLLM's last tab, which stays open.")
+                else -> TabClose.Refused(e.message ?: "PlasmaLLM didn't close the tab.")
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            TabClose.Refused("PlasmaLLM didn't answer: ${e.message}")
+        }
+    }
+
+    /** A tab that's gone can't be the problem shown here; PlasmaLLM's state names the tab in front next. */
+    private fun closed(tabId: String) {
+        _state.update { if (it.tabProblem?.tabId == tabId) it.copy(tabProblem = null) else it }
+    }
+
+    /**
+     * Bring PlasmaLLM's tab [tabId] to the front; this screen follows it, as it follows the
+     * computer. Null when done, else why not, in words for the user.
+     */
+    suspend fun showTab(tabId: String): String? {
+        val l = link ?: return "DroidACP isn't connected to PlasmaLLM."
+        if (!l.plasma || !_state.value.offersAgents) return "This PlasmaLLM can't bring its tabs to the front from here."
+        return try {
+            l.client.showTab(tabId)
+            null
+        } catch (e: RpcException) {
+            if (e.plasmaReason == PlasmaLlm.Reason.NO_TAB) "That tab isn't open any more." else e.message ?: "PlasmaLLM didn't show the tab."
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            "PlasmaLLM didn't answer: ${e.message}"
+        }
     }
 
     /**
@@ -950,17 +1045,18 @@ class AgentController(
         /**
          * Open a session. [target] null = new session. For an existing one,
          * [preferLoad] picks session/load (replays history) over session/resume. [meta] goes
-         * into a load or resume's `_meta` (the answer to PlasmaLLM's open_elsewhere).
+         * into a load or resume's `_meta` (the answer to PlasmaLLM's open_elsewhere). [agent]:
+         * a new chat in a new PlasmaLLM tab with that agent (protocol 15).
          */
-        suspend fun startSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null) {
-            sessionLock.withLock { openSession(target, preferLoad, cwd, meta) }
+        suspend fun startSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null, agent: PlasmaAgent? = null) {
+            sessionLock.withLock { openSession(target, preferLoad, cwd, meta, agent) }
             publishTablet()
             // TabDesk's approval may have come while it opened, too late for that request.
             if (relay?.let { it.declarable && !it.declared } == true) declareAgain()
             if (needsFollow()) followHost()
         }
 
-        private suspend fun openSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null) {
+        private suspend fun openSession(target: String?, preferLoad: Boolean, cwd: String, meta: JsonObject? = null, agent: PlasmaAgent? = null) {
             // Going back to a chat we left: its messages count again.
             if (target != null) left.remove(target)
             val caps = _state.value.capabilities
@@ -969,6 +1065,7 @@ class AgentController(
             val servers = relay?.mcpServers().orEmpty()
             try {
                 val setup: SessionSetup = when {
+                    target == null && agent != null -> client.newSession(cwd, servers, PlasmaLlm.newTabMeta(agent.id))
                     target == null -> client.newSession(cwd, servers)
                     // PlasmaLLM always takes session/load, whatever its agent says.
                     plasma || (caps.loadSession && (preferLoad || !caps.resumeSession)) -> {
@@ -1010,6 +1107,8 @@ class AgentController(
                         currentModeId = setup.currentModeId,
                         configOptions = setup.configOptions ?: it.configOptions,
                         authRequired = false,
+                        // A chat is open: whatever tab had no chat isn't the one shown any more.
+                        tabProblem = null,
                     )
                 }
             } catch (e: RpcException) {
@@ -1023,6 +1122,8 @@ class AgentController(
                     _state.update { resetSession(it, clearTranscript = false).copy(openElsewhere = elsewhere) }
                     val stays = e.plasmaSessionId
                     if (stays != null && host?.sessionId != stays) host = PlasmaChat(stays, host?.cwd ?: "", null, false)
+                } else if (plasma && agent != null) {
+                    tabFailed(agent, e)
                 } else if (plasma && e.plasmaReason == PlasmaLlm.Reason.NOT_FOUND) {
                     // The chat is gone, and PlasmaLLM stayed on the chat it had open: show that one
                     // again (followHost, below). The error names the chat asked for, not one opened
@@ -1050,7 +1151,36 @@ class AgentController(
                 // PlasmaLLM takes a declaration whatever happens to the request it came with.
                 if (servers.isNotEmpty()) relay?.declared = true
                 opened = true
-                _state.update { it.copy(startingSession = false, replaying = false) }
+                _state.update { it.copy(startingSession = false, replaying = false, startingAgent = null) }
+            }
+        }
+
+        /**
+         * A new tab with [agent] didn't give a chat (protocol 15). With a `tabId` the tab opened and
+         * stays open on the computer, in front, showing the problem: the phone shows it too
+         * ([TabProblem]) and follows nothing until PlasmaLLM names a chat in front again (the tab
+         * closed, or its agent started after all). Without one, nothing opened, and the phone goes
+         * back to the chat the computer stayed on, saying why.
+         */
+        private fun tabFailed(agent: PlasmaAgent, e: RpcException) {
+            val tabId = e.plasmaTabId
+            val reason = e.plasmaReason
+            val message = e.message?.ifBlank { null } ?: "PlasmaLLM couldn't start ${agent.name}."
+            if (tabId != null) {
+                host = null
+                _state.update {
+                    resetSession(it, clearTranscript = false).copy(
+                        tabProblem = TabProblem(tabId, agent.name, message, signIn = reason == PlasmaLlm.Reason.SIGN_IN_NEEDED),
+                    )
+                }
+                return
+            }
+            val note = "PlasmaLLM couldn't open a tab with ${agent.name}: $message"
+            _state.update { resetSession(it, clearTranscript = false) }
+            if (host != null) {
+                noteAfterFollow = note
+            } else {
+                _state.update { Transcript.addNote(it, note, ChatItem.Severity.Warning) }
             }
         }
 
@@ -1353,8 +1483,17 @@ class AgentController(
         }
 
         private fun onHostState(chat: PlasmaChat, tabletTools: Boolean?, tabs: List<PlasmaTab>?) {
-            // An empty id means PlasmaLLM is switching chats; the next state names the new one.
-            if (chat.sessionId.isEmpty()) return
+            // An empty id means PlasmaLLM is switching chats, and the next state names the new one;
+            // or (protocol 15) the tab in front has no chat: its agent is starting, or couldn't.
+            // Nothing to follow, but the tabs count: the starting one is listed.
+            val agentBefore = _state.value.frontAgentId
+            if (chat.sessionId.isEmpty()) {
+                _state.update { s ->
+                    s.copy(plasmaLlm = s.plasmaLlm?.copy(tabletTools = tabletTools ?: s.plasmaLlm.tabletTools, tabs = tabs ?: s.plasmaLlm.tabs))
+                }
+                relistIfAgentChanged(agentBefore)
+                return
+            }
             host = chat
             _state.update { s ->
                 s.copy(
@@ -1366,7 +1505,22 @@ class AgentController(
                     sessionTitle = if (s.sessionId == chat.sessionId && chat.title != null) chat.title else s.sessionTitle,
                 )
             }
+            relistIfAgentChanged(agentBefore)
             if (needsFollow()) followHost()
+        }
+
+        /**
+         * Each agent keeps its own chats (protocol 15), and `session/list` asks the front tab's: when
+         * a tab with another agent comes to the front, the chats listed are the other agent's, so
+         * the old list goes, and the folder is listed again.
+         */
+        private fun relistIfAgentChanged(agentBefore: String?) {
+            val now = _state.value
+            val agentNow = now.frontAgentId
+            val cwd = now.pastSessionsCwd
+            if (agentBefore == null || agentNow == null || agentBefore == agentNow || cwd == null) return
+            _state.update { it.copy(pastSessions = null, pastSessionsError = null) }
+            refreshPastSessions(cwd)
         }
 
         private fun onHostTurn(turn: PlasmaEvent.Turn) {

@@ -28,6 +28,7 @@ import com.droidacp.core.acp.ConfigOption
 import com.droidacp.tablet.TabDeskLink
 import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.chat.ChatBookmark
+import com.droidacp.core.acp.PlasmaAgent
 import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ImageAttachment
 import com.droidacp.core.chat.Profile
@@ -230,10 +231,25 @@ class MainActivity : ComponentActivity() {
 
                 override suspend fun chatExists(sessionId: String, cwd: String) = controller.chatExists(sessionId, cwd)
 
-                override fun toggleBookmark(sessionId: String, cwd: String, title: String?) {
+                override fun toggleBookmark(sessionId: String, cwd: String, title: String?, agentId: String?) {
                     val profileId = controller.state.value.profile?.id ?: return
-                    app.bookmarks.toggle(profileId, ChatBookmark(sessionId, cwd, title, System.currentTimeMillis()))
+                    app.bookmarks.toggle(profileId, ChatBookmark(sessionId, cwd, title, System.currentTimeMillis(), agentId))
                 }
+
+                override fun listAgents() = controller.refreshAgents()
+
+                override fun mustAskFor(agent: PlasmaAgent) = app.agentApprovals.needsAsking(agent)
+
+                override fun newAgentTab(agent: PlasmaAgent, cwd: String?) {
+                    attachments.clear()
+                    rememberFolder(cwd)
+                    app.agentApprovals.approve(agent)
+                    controller.newAgentTab(agent, cwd)
+                }
+
+                override suspend fun closeTab(tabId: String, force: Boolean) = controller.closeTab(tabId, force)
+
+                override suspend fun showTab(tabId: String) = controller.showTab(tabId)
 
                 override fun removeBookmark(sessionId: String) {
                     val profileId = controller.state.value.profile?.id ?: return

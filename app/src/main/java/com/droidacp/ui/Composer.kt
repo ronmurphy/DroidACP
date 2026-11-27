@@ -251,8 +251,10 @@ private fun MessageBox(
                     placeholder = {
                         Text(
                             when {
-                                state.canChat -> "Message ${state.agentName}…"
+                                state.canChat -> "Message ${state.chatAgentName}…"
                                 state.replaying -> "Opening the chat…"
+                                state.startingAgent != null -> "Starting ${state.startingAgent?.name}…"
+                                state.tabProblem != null -> "No chat in this tab"
                                 else -> "Not connected"
                             },
                             maxLines = 1,

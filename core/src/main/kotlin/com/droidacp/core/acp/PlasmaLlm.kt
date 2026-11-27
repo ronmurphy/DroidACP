@@ -33,9 +33,11 @@ object PlasmaLlm {
      * the look each agent chose for its Pixel Person ([PlasmaPerson]); 11, its shirt colour; 12,
      * a tablet call names the tab that made it, which may be a back tab; 13, `session/cancel`
      * stops any tab's turn ([CANCEL_ANY_TAB]); 14, the shared folder: PlasmaLLM's file tools
-     * send their chunks through this tablet, and `_plasmallm/tool_progress` comes ([FILES]).
+     * send their chunks through this tablet, and `_plasmallm/tool_progress` comes ([FILES]); 15,
+     * other agents than Claude, one per tab: the list ([PlasmaAgent]), a new tab with one
+     * ([newTabMeta]), `show_tab` and `close_tab`, and each tab's `agentId` and `tabId` ([AGENTS]).
      */
-    const val PROTOCOL = 14
+    const val PROTOCOL = 15
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
@@ -49,6 +51,20 @@ object PlasmaLlm {
      * those following the chat, and the tablet's whichever chat it follows (protocol 14).
      */
     const val FILES = 14
+
+    /**
+     * Other agents than Claude, one per tab (protocol 15): `_plasmallm/agents` lists them,
+     * `session/new` with [newTabMeta] opens a tab with one, [SHOW_TAB] and [CLOSE_TAB] act on
+     * a tab by its `tabId`.
+     */
+    const val AGENTS = 15
+
+    const val AGENTS_METHOD = "_plasmallm/agents"
+    const val SHOW_TAB = "_plasmallm/show_tab"
+    const val CLOSE_TAB = "_plasmallm/close_tab"
+
+    /** The default agent's id in `_plasmallm/agents`: Claude, which every tab ran before protocol 15. */
+    const val CLAUDE = "claude-acp"
 
     /** PlasmaLLM's phone access listens here unless the user changed it (the bridge uses 8765). */
     const val DEFAULT_PORT = 8766
@@ -105,6 +121,24 @@ object PlasmaLlm {
         const val NO_FOLDER = "no_folder"
         const val STILL_OPENING = "still_opening"
         const val TURN_ERROR = "turn_error"
+
+        /** A new tab with an agent that isn't in `_plasmallm/agents` (protocol 15). */
+        const val UNKNOWN_AGENT = "unknown_agent"
+
+        /** A new tab with an agent that can't start now (`ready: false`); the message says why. */
+        const val AGENT_UNAVAILABLE = "agent_unavailable"
+
+        /** The Plasma widget, which has no tabs. */
+        const val UNSUPPORTED = "unsupported"
+
+        /** `show_tab` or `close_tab` with a `tabId` no tab has. */
+        const val NO_TAB = "no_tab"
+
+        /** `close_tab` of the window's last tab, which stays open. */
+        const val LAST_TAB = "last_tab"
+
+        /** The window didn't close the tab. */
+        const val TAB_NOT_CLOSED = "tab_not_closed"
     }
 
     /**
@@ -171,6 +205,11 @@ object PlasmaLlm {
      */
     fun declareOnlyMeta(): JsonObject = buildJsonObject {
         putJsonObject("plasmallm") { put("declareOnly", true) }
+    }
+
+    /** The `_meta` of a `session/new` that opens a new tab with [agentId] (protocol 15), in front. */
+    fun newTabMeta(agentId: String): JsonObject = buildJsonObject {
+        putJsonObject("plasmallm") { put("agent", agentId) }
     }
 
     /** The `_meta` of a load retried after [Reason.OPEN_ELSEWHERE]: what to do about the other Claude. */
@@ -273,7 +312,28 @@ data class PlasmaTab(
     val detail: String? = null,
     /** The look its agent chose for its Pixel Person (protocol 10); null until it has. */
     val person: PlasmaPerson? = null,
+    /** Its agent's id in `_plasmallm/agents` ([PlasmaLlm.CLAUDE] for Claude), protocol 15; null before. */
+    val agentId: String? = null,
+    /** The tab's own id for `show_tab` and `close_tab`, also while it has no chat (protocol 15). */
+    val tabId: String? = null,
+    /**
+     * Its chat has the tablet's tools (protocol 15): false until the chat has started, for an
+     * agent that takes no HTTP MCP servers, and while the laptop's tablet setting is off.
+     */
+    val tabletTools: Boolean? = null,
 ) {
+    /** It's opening its agent and has no chat yet (protocol 15: `activity: "starting"`). */
+    val starting: Boolean get() = sessionId.isEmpty() && activity == "starting"
+
+    /**
+     * Its agent's name in words: its own (the ACP `agentInfo` title) when it has started, else
+     * the list's name for [agentId], else the id. Null before protocol 15 says which agent.
+     */
+    fun agentLabel(agents: List<PlasmaAgent>?): String? {
+        val id = agentId ?: return null
+        return agentTitle ?: agents?.firstOrNull { it.id == id }?.name ?: agentName ?: id
+    }
+
     companion object {
         /** Null when the state has no `tabs` (PlasmaLLM before protocol 8). */
         fun parseAll(o: JsonObject): List<PlasmaTab>? = o.arr("tabs")?.mapNotNull { e ->
@@ -290,9 +350,63 @@ data class PlasmaTab(
                     activity = it.str("activity")?.takeIf { t -> t.isNotBlank() },
                     detail = it.str("detail")?.takeIf { t -> t.isNotBlank() },
                     person = it.obj("person")?.let(PlasmaPerson::parse),
+                    agentId = it.str("agentId")?.takeIf { t -> t.isNotBlank() },
+                    tabId = it.str("tabId")?.takeIf { t -> t.isNotBlank() },
+                    tabletTools = it.bool("tabletTools"),
                 )
             }
         }
+    }
+}
+
+/**
+ * An agent a new PlasmaLLM tab can run, from `_plasmallm/agents` (protocol 15): Claude (the
+ * default), the ACP Registry's (Codex, GitHub Copilot…), and the user's own. The list comes
+ * in the order to show.
+ */
+data class PlasmaAgent(
+    val id: String,
+    val name: String,
+    /** `default` (Claude), `npx` / `uvx` (downloaded on its first start), `binary`, `command` (the user's own). */
+    val kind: String,
+    /** It can start now; [why] says why not, in a sentence. */
+    val ready: Boolean,
+    val why: String? = null,
+    /** Tried with a real account in PlasmaLLM (Claude, for now). The others may lack sign-in, its tools or reopening chats. */
+    val tested: Boolean = false,
+    /** Being made to work in PlasmaLLM (Codex, Copilot, Antigravity): listed after the default. */
+    val featured: Boolean = false,
+    val isDefault: Boolean = false,
+    /** The registry's pinned version, for a downloaded one. */
+    val version: String? = null,
+    val description: String? = null,
+    val website: String? = null,
+) {
+    /** PlasmaLLM downloads it from npm or PyPI the first time, so the first start can take a minute. */
+    val downloads: Boolean get() = kind == "npx" || kind == "uvx"
+
+    /** "Codex 2.12.1". */
+    val nameAndVersion: String get() = version?.let { "$name $it" } ?: name
+
+    companion object {
+        /** The answer's `agents`, in the order given. Entries without an id are left out. */
+        fun parseAll(result: JsonObject?): List<PlasmaAgent> = result?.arr("agents")?.mapNotNull { e ->
+            val o = e as? JsonObject ?: return@mapNotNull null
+            val id = o.str("id")?.ifBlank { null } ?: return@mapNotNull null
+            PlasmaAgent(
+                id = id,
+                name = o.str("name")?.ifBlank { null } ?: id,
+                kind = o.str("kind") ?: "",
+                ready = o.bool("ready") ?: false,
+                why = o.str("why")?.ifBlank { null },
+                tested = o.bool("tested") ?: false,
+                featured = o.bool("featured") ?: false,
+                isDefault = o.bool("isDefault") ?: false,
+                version = o.str("version")?.ifBlank { null },
+                description = o.str("description")?.ifBlank { null },
+                website = o.str("website")?.ifBlank { null },
+            )
+        }.orEmpty()
     }
 }
 
@@ -424,6 +538,10 @@ private const val MAX_PROGRESS_CHARS = 200
 /** PlasmaLLM's reason for an error (`error.data.plasmallm.reason`), or null for any other error. */
 val RpcException.plasmaReason: String?
     get() = ((data as? JsonObject)?.obj("plasmallm"))?.str("reason")
+
+/** The tab a PlasmaLLM error names (`error.data.plasmallm.tabId`, protocol 15): one opened for a new agent that then failed. */
+val RpcException.plasmaTabId: String?
+    get() = ((data as? JsonObject)?.obj("plasmallm"))?.str("tabId")?.takeIf { it.isNotEmpty() }
 
 /** The chat a PlasmaLLM error names (`error.data.plasmallm.sessionId`), if any. */
 val RpcException.plasmaSessionId: String?

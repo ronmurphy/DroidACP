@@ -153,6 +153,8 @@ data class SessionSetup(
     val modes: List<SessionMode>,
     val currentModeId: String?,
     val configOptions: List<ConfigOption>?,
+    /** PlasmaLLM's tab the chat is in (`_meta.plasmallm.tabId`, protocol 15); null for other agents. */
+    val tabId: String? = null,
 ) {
     companion object {
         fun parse(sessionId: String, o: JsonObject?): SessionSetup {
@@ -165,6 +167,7 @@ data class SessionSetup(
                 } ?: emptyList(),
                 currentModeId = modes?.str("currentModeId"),
                 configOptions = o?.arr("configOptions")?.let { arr -> ConfigOption.parseList(arr.mapNotNull { it as? JsonObject }) },
+                tabId = o?.obj("_meta")?.obj("plasmallm")?.str("tabId")?.ifEmpty { null },
             )
         }
     }
