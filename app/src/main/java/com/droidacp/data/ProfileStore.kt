@@ -32,12 +32,18 @@ class ProfileStore(context: Context) {
         persist(_profiles.value.filterNot { it.id == id })
         prefs.edit().remove(sessionKey(id)).remove(folderKey(id)).apply()
         if (lastProfileId == id) lastProfileId = null
+        if (afterRebootId == id) afterRebootId = null
     }
 
     /** The agent used most recently (the widget reconnects to it). */
     var lastProfileId: String?
         get() = prefs.getString(KEY_LAST, null)
         set(value) = prefs.edit().putString(KEY_LAST, value).apply()
+
+    /** The agent the tablet's relay connects to by itself after a reboot (plan D15), if any. */
+    var afterRebootId: String?
+        get() = prefs.getString(KEY_AFTER_REBOOT, null)
+        set(value) = prefs.edit().putString(KEY_AFTER_REBOOT, value).apply()
 
     fun lastSessionId(profileId: String): String? = prefs.getString(sessionKey(profileId), null)
 
@@ -76,5 +82,6 @@ class ProfileStore(context: Context) {
         const val KEY_LIST = "list"
         const val KEY_SEALED = "sealed"
         const val KEY_LAST = "last"
+        const val KEY_AFTER_REBOOT = "afterReboot"
     }
 }

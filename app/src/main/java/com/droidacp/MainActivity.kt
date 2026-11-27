@@ -6,8 +6,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
-import android.provider.Settings
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -34,6 +32,7 @@ import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.ImageAttachment
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
+import com.droidacp.service.Background
 import com.droidacp.service.Notifications
 import com.droidacp.ui.AndroidImageDecoder
 import com.droidacp.ui.AttachmentThumb
@@ -128,17 +127,9 @@ class MainActivity : ComponentActivity() {
 
     /**
      * The tablet's relay has to stay connected with the screen off: ask, with Android's own
-     * dialog, to leave DroidACP out of battery optimisation (once; nothing if it already is).
+     * dialog, to leave DroidACP out of battery optimisation (nothing if it already is).
      */
-    private fun askToStayConnected() {
-        val power = getSystemService(PowerManager::class.java) ?: return
-        if (power.isIgnoringBatteryOptimizations(packageName)) return
-        try {
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-        } catch (e: ActivityNotFoundException) {
-            // This maker's Android has no such dialog; TabDesk's setup explains the maker's own steps.
-        }
-    }
+    private fun askToStayConnected() = Background.askToBeExempt(this)
 
     /** Folders are remembered per kind of machine: PlasmaLLM runs on the same kind of computer as a bridge. */
     private fun folderKind(profile: Profile?): ProfileKind? = when (profile?.kind) {

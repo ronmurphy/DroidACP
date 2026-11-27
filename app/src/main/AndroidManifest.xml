@@ -7,8 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
-    <!-- Asked only when "Let the agent use this tablet" goes on: the relay must stay connected. -->
+    <!-- Asked when "Let the agent use this tablet" goes on (the relay must stay connected), and offered in any agent's form. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- The tablet's relay connects again by itself after a reboot (plan D15). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
         The built-in agent reads, edits and runs commands in a project folder you
         choose, e.g. Documents/DroidACP. Android 11+ calls that "All files access"
@@ -77,6 +79,15 @@
             android:name=".service.AgentService"
             android:exported="false"
             android:foregroundServiceType="dataSync|remoteMessaging" />
+
+        <!-- Only the system can send BOOT_COMPLETED, so exporting it lets nothing else in. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- The Reply box in "agent finished" notifications. -->
         <receiver

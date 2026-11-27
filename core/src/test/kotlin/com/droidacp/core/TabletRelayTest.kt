@@ -4,6 +4,7 @@ import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.chat.AgentController
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
+import com.droidacp.core.chat.ConnectionStatus
 import com.droidacp.core.chat.Profile
 import com.droidacp.core.chat.ProfileKind
 import com.droidacp.core.rpc.RpcErrorCodes
@@ -973,6 +974,7 @@ class TabletRelayTest {
         assertEquals(false, tabdesk.wanted.last())
         assertNull(c.state.value.tablet)
         assertFalse(c.state.value.reconnecting)
+        assertEquals(ConnectionStatus.Disconnected, c.state.value.status, "ended, not failed")
     }
 
     @Test

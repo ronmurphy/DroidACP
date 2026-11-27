@@ -415,7 +415,22 @@ reads only their envelope; TabDesk decides what's allowed.
   opened), and the foreground service stays up meanwhile. A refusal (HTTP 4xx, such as
   a rejected token, or an invalid address: `ConnectionRefusedException`) ends it. A drop
   it recovers from raises no alert; one it gives up on does. An edit of the agent saved
-  while connected is used from the next connection on, a reconnect too.
+  while connected is used from the next connection on, a reconnect too. Disconnect
+  while a reconnect waits ends the failed connection as `Disconnected`.
+- **After a reboot** (plan D15). `AfterReboot.change` decides from the state which agent
+  to connect after a reboot: one that uses the tablet while its connection is wanted
+  (connecting, connected or waiting to reconnect). Another agent, or Disconnect, forgets
+  it; a failure that gave up, or the app starting with no agent, leaves it. `DroidAcpApp`
+  keeps it in `ProfileStore.afterRebootId`, and `service/BootReceiver` (on
+  `BOOT_COMPLETED`, sent after the first unlock) calls `connectAfterBoot()` and starts
+  the foreground service while Android allows it. Android 15 doesn't allow a `dataSync`
+  service from `BOOT_COMPLETED`; `AgentService` is `remoteMessaging` from Android 14 on.
+  A first connection that fails because the network isn't up yet is tried again as for
+  a drop.
+- **Battery** (plan D14). `service/Background` asks with Android's
+  `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` dialog (else the list of apps): when the
+  tablet setting goes on, and from the "With the screen off" card on any agent's form,
+  shown until DroidACP is left out of battery optimisation.
 - **UI.** `ui/TabletBar.kt` (over the message box) and `ui/TabletSettings.kt` (on the
   agent's form, with "Quiet on this device", `Profile.quietHere`, which drops this
   agent's event notifications on the tablet).
