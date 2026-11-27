@@ -250,7 +250,11 @@ private fun MessageBox(
                     enabled = state.canChat,
                     placeholder = {
                         Text(
-                            if (state.canChat) "Message ${state.agentName}…" else "Not connected",
+                            when {
+                                state.canChat -> "Message ${state.agentName}…"
+                                state.replaying -> "Opening the chat…"
+                                else -> "Not connected"
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )

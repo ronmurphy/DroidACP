@@ -405,6 +405,30 @@ class PlasmaLlmTest {
     }
 
     @Test
+    fun aChatBeingOpenedShowsItsTabsTitleUntilItsHistoryIsIn() = runBlocking {
+        val c = controller { history["chat-b"] = listOf(userChunk("hello", "plasmallm-1"), agentChunk("hi there")) }
+        c.connect(plasmaProfile)
+        c.joined("chat-a")
+        host.notify(
+            PlasmaLlm.STATE,
+            chatState("chat-a", "/home/me/project", tabs = listOf(tab("chat-a", "/home/me/project", "Open chat", front = true), tab("chat-b", "/home/me/b", "Tab B"))),
+        )
+        c.waitFor("the tabs") { it.plasmaLlm?.tabs != null }
+
+        // The history is in, but the load hasn't answered: still opening (the screen shows
+        // "Opening the chat…", not the list), under the tab's title.
+        host.holdLoads = true
+        c.openPastSession("chat-b", "/home/me/b")
+        val opening = c.waitFor("chat b's history") { it.sessionId == "chat-b" && it.items.size == 2 }
+        assertTrue(opening.replaying)
+        assertEquals("Tab B", opening.sessionTitle)
+
+        host.answerLoad()
+        val open = c.waitFor("chat b open") { it.sessionId == "chat-b" && !it.replaying && it.canChat }
+        assertEquals(listOf("hello", "hi there"), open.items.map { it.text() })
+    }
+
+    @Test
     fun onlyASwitchThatReplacesAWorkingChatIsAskedAbout() {
         val tabs = listOf(
             PlasmaTab("chat-a", "/p", "A", busy = true, front = true),
@@ -826,6 +850,14 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
     /** Answer the oldest held prompt with [result]. */
     fun answerPrompt(result: JsonObject) = executor.execute { reply(heldPrompts.removeAt(0), result) }
 
+    /** A load sends its history, then waits for [answerLoad] (a slow connection, say). */
+    @Volatile
+    var holdLoads = false
+    private val heldLoads = CopyOnWriteArrayList<JsonElement?>()
+
+    /** Answer the oldest held load. */
+    fun answerLoad() = executor.execute { finishLoad(heldLoads.removeAt(0)) }
+
     /** Chats another Claude has open, and its status ("idle" or "busy"): refused with `open_elsewhere`. */
     val elsewhere = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile
@@ -1035,9 +1067,7 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
                 open = sessionId
                 openCwd = params.str("cwd")?.ifEmpty { null } ?: openCwd
                 history[sessionId].orEmpty().forEach { update(sessionId, it) }
-                reply(id, JsonObject(emptyMap()))
-                if (runningTurn) notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", open); put("state", "started") })
-                state()
+                if (holdLoads) heldLoads += id else finishLoad(id)
             }
             "session/resume" -> {
                 // Only declaring the tablet: never opens another chat (protocol 2).
@@ -1069,6 +1099,13 @@ class FakePlasmaLlm(private val listener: TransportListener) : Transport {
             }
             else -> reply(id, JsonObject(emptyMap()))
         }
+    }
+
+    /** After a load's history: its answer, then the turn running in it, then the state, as PlasmaLLM sends them. */
+    private fun finishLoad(id: JsonElement?) {
+        reply(id, JsonObject(emptyMap()))
+        if (runningTurn) notify(PlasmaLlm.TURN, buildJsonObject { put("sessionId", open); put("state", "started") })
+        state()
     }
 
     fun state() = notify(PlasmaLlm.STATE, buildJsonObject {

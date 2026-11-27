@@ -22,6 +22,7 @@ import com.droidacp.core.chat.TransportFactory
 import com.droidacp.data.BookmarkStore
 import com.droidacp.data.FolderHistory
 import com.droidacp.data.ProfileStore
+import com.droidacp.data.ViewSettings
 import com.droidacp.service.AgentService
 import com.droidacp.service.Notifications
 import com.droidacp.tablet.TabDeskLink
@@ -55,6 +56,10 @@ class DroidAcpApp : Application() {
     lateinit var bookmarks: BookmarkStore
         private set
 
+    /** The developer view or the standard one, for every agent on this device. */
+    lateinit var view: ViewSettings
+        private set
+
     /**
      * TabDesk's agent service on this device, through which PlasmaLLM's agent may use the
      * tablet (only for an agent with "Let the agent use this tablet" on).
@@ -86,6 +91,7 @@ class DroidAcpApp : Application() {
         profiles = ProfileStore(this)
         folders = FolderHistory(this)
         bookmarks = BookmarkStore(this)
+        view = ViewSettings(this) { profiles.profiles.value.isNotEmpty() }
         Notifications.createChannels(this)
         registerActivityLifecycleCallbacks(ForegroundTracker())
         watchController()

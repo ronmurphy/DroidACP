@@ -973,8 +973,14 @@ class AgentController(
                     // PlasmaLLM always takes session/load, whatever its agent says.
                     plasma || (caps.loadSession && (preferLoad || !caps.resumeSession)) -> {
                         // History is replayed as session/update notifications, so start clean.
-                        // PlasmaLLM told us the open chat's title already; show it while it loads.
-                        val title = host?.takeIf { plasma && it.sessionId == target }?.title
+                        // PlasmaLLM told us the chat's title already (the open chat's, or one of
+                        // its tabs'); show it while it loads.
+                        val title = if (!plasma) {
+                            null
+                        } else {
+                            host?.takeIf { it.sessionId == target }?.title
+                                ?: _state.value.plasmaLlm?.tabs?.firstOrNull { it.sessionId == target }?.title
+                        }
                         _state.update { it.copy(sessionId = target, sessionTitle = title ?: it.sessionTitle, replaying = true, items = emptyList()) }
                         client.loadSession(target, cwd, meta, servers)
                     }

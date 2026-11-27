@@ -172,6 +172,7 @@ class MainActivity : ComponentActivity() {
         val bridgeFolderHistory by app.folders.recent(ProfileKind.Bridge).collectAsStateWithLifecycle()
         val localFolderHistory by app.folders.recent(ProfileKind.Local).collectAsStateWithLifecycle()
         val bookmarks by app.bookmarks.all.collectAsStateWithLifecycle()
+        val developer by app.view.developer.collectAsStateWithLifecycle()
 
         val startOnChat = state.status == ConnectionStatus.Connecting || state.status == ConnectionStatus.Connected
         var screen by rememberSaveable { mutableStateOf(if (startOnChat) Screen.Chat else Screen.Profiles) }
@@ -264,6 +265,8 @@ class MainActivity : ComponentActivity() {
                     screen = Screen.Log
                 }
 
+                override fun setDeveloperView(on: Boolean) = app.view.setDeveloper(on)
+
                 override fun draftUsed() {
                     draft.value = null
                 }
@@ -348,6 +351,7 @@ class MainActivity : ComponentActivity() {
                             FolderBrowse(app.bridgeFolders, it.connectUrl, if (it.isPlasmaLlm) "" else it.token)
                         },
                     ),
+                    developer = developer,
                 )
             }
 

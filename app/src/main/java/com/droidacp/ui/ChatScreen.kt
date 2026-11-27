@@ -74,8 +74,10 @@ import com.droidacp.core.acp.OpenElsewhereChoice
 import com.droidacp.core.chat.ChatBookmarks
 import com.droidacp.core.chat.ChatItem
 import com.droidacp.core.chat.ChatState
+import com.droidacp.core.chat.ChatView
 import com.droidacp.core.people.stripPeople
 import com.droidacp.core.chat.ConnectionStatus
+import com.droidacp.core.chat.toolProgressNow
 import kotlinx.coroutines.launch
 
 /** Everything the chat screen can ask for. The Android side forwards these to AgentController. */
@@ -111,6 +113,9 @@ interface ChatActions {
     fun disconnect()
     fun openLog()
 
+    /** The developer view or the standard one, for every agent on this device ([ChatView]). */
+    fun setDeveloperView(on: Boolean)
+
     /** The tablet bar's Stop: the turn, and the agent's use of this tablet until the next message. */
     fun stopTablet()
 
@@ -138,6 +143,8 @@ fun ChatScreen(
     focusRequest: Int,
     draft: String? = null,
     chats: ChatsPanel = ChatsPanel(),
+    /** The developer view (tool cards, thinking, plans), or the standard one: [ChatView]. */
+    developer: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var confirmRelease by remember { mutableStateOf(false) }
@@ -272,18 +279,22 @@ fun ChatScreen(
                 state.items.isEmpty() && status is ConnectionStatus.Connecting -> CenterMessage(connectingText(state), progress = true)
                 state.items.isEmpty() && status is ConnectionStatus.Failed -> ConnectionError(status.reason, actions)
                 state.authRequired -> AuthPanel(state, actions)
+                // A chat's history arrives one message at a time: it's built out of sight, and
+                // the list shows once, at its end, instead of racing past as it fills.
+                state.replaying -> CenterMessage(ChatView.openingText(state, developer), progress = true)
                 state.items.isEmpty() && state.startingSession -> CenterMessage("Starting a session…", progress = true)
                 state.items.isEmpty() && state.canChat -> EmptyChat(state)
-                else -> MessageList(state, listState, side)
+                else -> MessageList(state, listState, side, developer)
             }
 
             Column(Modifier.padding(horizontal = side, vertical = 6.dp)) {
                 if (status is ConnectionStatus.Failed && state.items.isNotEmpty()) DisconnectedBanner(status.reason, actions)
-                PlanBar(state.plans)
+                // The agent's plan is part of its work, which the standard view leaves out.
+                if (developer) PlanBar(state.plans)
             }
 
             val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
-            if (!atBottom && state.items.isNotEmpty()) {
+            if (!atBottom && state.items.isNotEmpty() && !state.replaying) {
                 SmallFloatingActionButton(
                     onClick = { scope.launch { follower.scrollToEnd() } },
                     modifier = Modifier
@@ -296,8 +307,9 @@ fun ChatScreen(
 
     // Follow the conversation while new text streams in, unless the user scrolled up.
     LaunchedEffect(follower) { follower.watch() }
-    // Another chat (PlasmaLLM switched, or one picked from the history): start at its end.
-    LaunchedEffect(state.sessionId) { follower.scrollToEnd() }
+    // Another chat (PlasmaLLM switched, or one picked from the history): start at its end,
+    // once its history is in.
+    LaunchedEffect(state.sessionId, state.replaying) { if (!state.replaying) follower.scrollToEnd() }
     val last = state.items.lastOrNull()
     val lastSize = when (last) {
         is ChatItem.Agent -> last.text.length
@@ -305,14 +317,14 @@ fun ChatScreen(
         is ChatItem.Tool -> last.call.status.length + last.call.content.size
         else -> 0
     }
-    LaunchedEffect(state.items.size, lastSize, state.busy) { follower.keepUp() }
+    LaunchedEffect(state.items.size, lastSize, state.busy, state.replaying) { if (!state.replaying) follower.keepUp() }
 
     val permission = state.permissions.firstOrNull()
     if (permission != null) {
         val tool = state.items.lastOrNull { it is ChatItem.Tool && it.call.id == permission.toolCallId } as? ChatItem.Tool
         PermissionDialog(permission, tool?.call, onAnswer = { optionId -> actions.answerPermission(permission.requestId, optionId) })
     }
-    if (settingsOpen) SessionSettingsSheet(state, actions, atContext = settingsAtContext, onDismiss = { settingsOpen = false })
+    if (settingsOpen) SessionSettingsSheet(state, actions, developer, atContext = settingsAtContext, onDismiss = { settingsOpen = false })
     if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = { id, go -> switchChat(id, go) }, onDismiss = { chatsOpen = false })
     // Under the stop question: answering it ("Keep working") brings this one back.
     val elsewhere = state.openElsewhere
@@ -431,6 +443,7 @@ private fun subtitle(state: ChatState): String {
         state.permissions.isNotEmpty() -> "Waiting for your permission"
         state.busy && state.remoteTurn -> "Working (sent from another screen)…"
         state.busy -> "Working…"
+        state.replaying -> "Opening the chat…"
         state.startingSession -> "Starting session…"
         // The title line shows the chat; this one says where it is.
         else -> listOfNotNull(
@@ -442,27 +455,30 @@ private fun subtitle(state: ChatState): String {
 }
 
 @Composable
-private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
+private fun MessageList(state: ChatState, listState: LazyListState, side: Dp, developer: Boolean) {
     // Leave room at the top for the plan bar, which floats over the list.
-    val topPadding = if (state.plans.isNotEmpty()) 64.dp else 8.dp
+    val topPadding = if (developer && state.plans.isNotEmpty()) 64.dp else 8.dp
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(start = side, end = side, top = topPadding, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        // Notes between PlasmaLLM's agents aren't for the user (the agent's answer still shows).
-        val shown = state.items.filterNot { it is ChatItem.User && it.agentNote }
+        val shown = ChatView.shown(state, developer)
         items(shown, key = { it.key }) { item ->
             when (item) {
                 is ChatItem.User -> UserBubble(item)
                 is ChatItem.Agent -> AgentMessage(item)
                 is ChatItem.Thought -> ThoughtView(item, live = state.busy && item === state.items.lastOrNull())
-                is ChatItem.Tool -> ToolCallCard(
-                    item.call,
-                    waitingElsewhere = item.call.id in state.waitingElsewhere,
-                    progress = state.progressOf(item.call),
-                )
+                is ChatItem.Tool -> if (developer) {
+                    ToolCallCard(
+                        item.call,
+                        waitingElsewhere = item.call.id in state.waitingElsewhere,
+                        progress = state.progressOf(item.call),
+                    )
+                } else {
+                    ToolPictures(item.call)
+                }
                 is ChatItem.Note -> NoteView(item)
             }
         }
@@ -476,6 +492,8 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp) {
                             state.cancelling -> "Stopping…"
                             // An action on this tablet, approved on the phone or the laptop.
                             state.waitingElsewhere.isNotEmpty() -> "Waiting for approval on your phone or laptop…"
+                            // A file being copied, say: on its card in the developer view.
+                            !developer && state.toolProgressNow != null -> state.toolProgressNow.orEmpty()
                             // A prompt typed in PlasmaLLM's window or on another device.
                             state.remoteTurn -> "${state.agentName} is working on a message sent from another screen…"
                             else -> "${state.agentName} is working…"

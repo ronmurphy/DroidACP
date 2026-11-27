@@ -251,6 +251,13 @@ TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
   "+12 −3" for an edit), and a tap opens them full screen, with lines wrapped or scrolling sideways.
   Lines over 2,000 characters (minified code, say) are cut in the chat; the permission dialog
   always shows everything. Commands show as the agent wrote them, with real line breaks, not as JSON
+- **Two views**, under the gear at the top of the chat, for every agent on the device:
+  **Developer** shows everything above (tool calls, thinking, plans); **Standard** shows just the
+  conversation and its pictures (a tool's screenshot or image shows on its own, without its card),
+  for people who only chat. A device that had agents before keeps Developer; a new one starts
+  with Standard
+- **Opening a chat** builds its history out of sight ("Opening the chat… 240 messages so far")
+  and shows it once, at its end, instead of racing past as it arrives
 - **Permission prompts**: allow once, always allow, or reject, as offered by the agent
 - **Plans**: the agent's to-do list, as a collapsible bar
 - **Modes and models**: session modes plus ACP config options (model, reasoning level, toggles),

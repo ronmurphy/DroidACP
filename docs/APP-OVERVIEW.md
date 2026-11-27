@@ -214,6 +214,24 @@ the agents, not the user: `ChatItem.User.agentNote` keeps such a message in
 the transcript, the chat and the widget leave it out, and its turn posts no
 "finished" notification. The agent's answer still shows.
 
+What the chat list shows is `ChatView.shown`, in one of two views kept per
+device (`ViewSettings`, chosen under the gear): the developer view shows every
+item; the standard view leaves out thinking and tool cards, except that a
+tool's pictures (`ChatView.picturesOf`: a screenshot, an image it read) show on
+their own (`ToolPictures`), and hides the plan bar; a running tool's progress
+line goes in the "working" row instead of its card. Notes between PlasmaLLM's
+agents never show. A device with agents saved when `ViewSettings` first runs
+keeps the developer view; a new install starts with the standard one.
+
+Opening a chat (`session/load`): the history arrives as `session/update`s
+before the load's answer, and `ChatState.replaying` is true until then. The
+chat screen shows `ChatView.openingText` ("Opening the chat… N so far") instead
+of the list, then the list once, at its end. Composing and scrolling the list
+for each update was most of a switch's cost (about 40% of the processor time
+for a 1,800-update chat, measured on an emulator with a release build). The
+title is the chat's own from the start when PlasmaLLM named it (the open chat,
+or one of its tabs).
+
 Tool cards (`ToolCallCard.kt`): `ToolSize.detailLines` counts what an open card
 would show, a long line counting as one per 100 characters. Over 20 lines, the
 card stays closed, its header says "N lines" (or "+A −R" for edits, from
