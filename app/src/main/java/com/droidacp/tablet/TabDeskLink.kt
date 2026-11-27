@@ -76,8 +76,12 @@ class TabDeskLink(context: Context) : TabletLink {
         override fun onControlState(state: String?, reason: String?) {
             if (state == null) return
             _status.update { it.copy(control = state, reason = reason.orEmpty()) }
-            // A Stop (here or on TabDesk) drops the running calls, and TabDesk won't answer them.
-            if (state == TabletStatus.STOPPED) failAll(RpcErrorCodes.REQUEST_CANCELLED, "Stopped on the tablet")
+            // A Stop (here or on TabDesk) or a pause (the user touched the screen) drops the
+            // running calls, and TabDesk won't answer them.
+            when (state) {
+                TabletStatus.STOPPED -> failAll(RpcErrorCodes.REQUEST_CANCELLED, "Stopped on the tablet")
+                TabletStatus.PAUSED -> answerAll(TabletStatus.PAUSED_ANSWER)
+            }
             // The approval, the switch or the name may have changed with it.
             worker.execute { readStatus() }
         }
@@ -309,6 +313,11 @@ class TabDeskLink(context: Context) : TabletLink {
         } catch (e: IllegalArgumentException) {
             // Never bound.
         }
+    }
+
+    /** Every call still waiting gets [json] as TabDesk's answer (one TabDesk dropped). */
+    private fun answerAll(json: String) {
+        for (id in pending.keys.toList()) pending.remove(id)?.complete(json)
     }
 
     private fun failAll(code: Int, message: String) {

@@ -1156,8 +1156,11 @@ class AgentController(
             if (!isCurrent) return
             val before = lastControl
             lastControl = status.control
-            // Stop on TabDesk's indicator stops the agent's turn too. (`caller` is our own Stop coming back.)
-            if (status.control == TabletStatus.STOPPED && before != TabletStatus.STOPPED && status.reason == TabletStatus.BY_TABDESK && r.allowed) {
+            // Stop on TabDesk's indicator stops the agent's turn too, and so does a pause: the user
+            // touched the screen (D11). (`caller` is our own Stop coming back.)
+            val stoppedThere = status.control == TabletStatus.STOPPED && status.reason == TabletStatus.BY_TABDESK
+            val paused = status.control == TabletStatus.PAUSED
+            if ((stoppedThere || paused) && before != status.control && r.allowed) {
                 stoppedOnTablet(r)
             }
             publishTablet()
@@ -1165,8 +1168,8 @@ class AgentController(
         }
 
         /**
-         * Stop was pressed on TabDesk: cancel the turn that used the tablet, the one the last
-         * call came from. Before protocol 13, PlasmaLLM cancels only the chat it has in front,
+         * Stop was pressed on TabDesk, or it paused because the user touched the screen: cancel
+         * the turn that used the tablet, the one the last call came from. Before protocol 13, PlasmaLLM cancels only the chat it has in front,
          * so a back tab's turn goes on there (TabDesk still refuses its calls).
          */
         private fun stoppedOnTablet(r: TabletRelay) {

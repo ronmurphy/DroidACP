@@ -3,6 +3,11 @@ package com.droidacp.core.tablet
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * DroidACP's connection to TabDesk's agent service on this tablet, as the relay sees it
@@ -144,6 +149,28 @@ data class TabletStatus(
 
         /** `stopped`'s reason when Stop was pressed on TabDesk's indicator or notification. */
         const val BY_TABDESK = "tabdesk"
+
+        /** `paused`'s reason: the user touched the screen while the agent was using it (tool list 2). */
+        const val TOUCHED = "touched"
+
+        /**
+         * The answer to a call TabDesk dropped when it paused (plan D11): it answers none
+         * itself, so DroidACP gives TabDesk's own `paused` refusal, an MCP result the agent
+         * reads and can tell the user about.
+         */
+        val PAUSED_ANSWER: String = buildJsonObject {
+            put("jsonrpc", "2.0")
+            putJsonObject("result") {
+                putJsonArray("content") {
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", "Refused (paused): The user touched the screen. The agent can go on after the user's next message.")
+                    })
+                }
+                put("isError", true)
+                putJsonObject("_meta") { put("dev.tabdesk/refused", "paused") }
+            }
+        }.toString()
     }
 }
 

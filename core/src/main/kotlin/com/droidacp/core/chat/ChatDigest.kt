@@ -2,6 +2,7 @@ package com.droidacp.core.chat
 
 import com.droidacp.core.acp.PermissionOption
 import com.droidacp.core.acp.ToolCall
+import com.droidacp.core.tablet.TabletActions
 
 /** Readable tool names: `mcp__plasmallm__read_log` becomes "read log · plasmallm", as PlasmaLLM shows it. */
 object ToolNames {
@@ -15,7 +16,20 @@ object ToolNames {
     }
 }
 
-val ToolCall.displayTitle: String get() = ToolNames.display(title)
+/** The card's title: a tablet action in words (`Tap “Send”`, plan D12), else the tool's readable name. */
+val ToolCall.displayTitle: String get() = TabletActions.describe(title, rawInput) ?: ToolNames.display(title)
+
+/**
+ * The tablet action this chat's agent is doing now, in words (`Tap “Send”`), for the
+ * notification; null when its running tool isn't one.
+ */
+val ChatState.tabletAction: String?
+    get() {
+        if (!busy) return null
+        val call = (items.lastOrNull() as? ChatItem.Tool)?.call ?: return null
+        if (call.status != "pending" && call.status != "in_progress") return null
+        return TabletActions.describe(call.title, call.rawInput)
+    }
 
 /**
  * The conversation as short lines of plain text, for the home-screen widget: what you
