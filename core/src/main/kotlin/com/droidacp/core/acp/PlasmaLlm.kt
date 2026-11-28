@@ -35,9 +35,11 @@ object PlasmaLlm {
      * stops any tab's turn ([CANCEL_ANY_TAB]); 14, the shared folder: PlasmaLLM's file tools
      * send their chunks through this tablet, and `_plasmallm/tool_progress` comes ([FILES]); 15,
      * other agents than Claude, one per tab: the list ([PlasmaAgent]), a new tab with one
-     * ([newTabMeta]), `show_tab` and `close_tab`, and each tab's `agentId` and `tabId` ([AGENTS]).
+     * ([newTabMeta]), `show_tab` and `close_tab`, and each tab's `agentId` and `tabId` ([AGENTS]);
+     * 16, a tool's pictures in its content, which needed nothing here; 17, a project folder's
+     * to-do list, read only ([TODO]).
      */
-    const val PROTOCOL = 15
+    const val PROTOCOL = 17
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
@@ -60,6 +62,15 @@ object PlasmaLlm {
     const val AGENTS = 15
 
     const val AGENTS_METHOD = "_plasmallm/agents"
+
+    /**
+     * A project folder's to-do list, TASKLIST.md, as PlasmaLLM's To do tab reads it (protocol
+     * 17): [TODO_METHOD] answers it ([TodoList]), and [TODO_CHANGED] says when a folder's list
+     * this device read has changed. Read only, for now.
+     */
+    const val TODO = 17
+    const val TODO_METHOD = "_plasmallm/todo"
+    const val TODO_CHANGED = "_plasmallm/todo_changed"
     const val SHOW_TAB = "_plasmallm/show_tab"
     const val CLOSE_TAB = "_plasmallm/close_tab"
 
@@ -139,6 +150,9 @@ object PlasmaLlm {
 
         /** The window didn't close the tab. */
         const val TAB_NOT_CLOSED = "tab_not_closed"
+
+        /** A to-do list over PlasmaLLM's cap for devices (256 KB), protocol 17. */
+        const val TOO_BIG = "too_big"
     }
 
     /**
@@ -485,6 +499,9 @@ sealed interface PlasmaEvent {
         val byUser: Boolean get() = started && by == "user"
     }
 
+    /** The to-do list in [cwd], which this device read, changed (protocol 17): read it again. */
+    data class TodoChanged(val cwd: String) : PlasmaEvent
+
     /** A permission request this device was asked was answered elsewhere, or dropped. */
     data class PermissionResolved(val sessionId: String, val toolCallId: String) : PlasmaEvent
 
@@ -521,6 +538,7 @@ sealed interface PlasmaEvent {
                 val toolCallId = params.str("toolCallId")
                 if (toolCallId.isNullOrEmpty()) null else PermissionElsewhere(params.str("sessionId") ?: "", toolCallId, params.str("reason"))
             }
+            PlasmaLlm.TODO_CHANGED -> params.str("cwd")?.let(::TodoChanged)
             PlasmaLlm.TOOL_PROGRESS -> {
                 val toolCallId = params.str("toolCallId")
                 // One line, and short: it's plain text, shown as it came.
@@ -546,3 +564,79 @@ val RpcException.plasmaTabId: String?
 /** The chat a PlasmaLLM error names (`error.data.plasmallm.sessionId`), if any. */
 val RpcException.plasmaSessionId: String?
     get() = ((data as? JsonObject)?.obj("plasmallm"))?.str("sessionId")?.takeIf { it.isNotEmpty() }
+
+/**
+ * A project folder's to-do list (protocol 17), read by PlasmaLLM's own parser, the one its To do
+ * tab and the agents' tools use, so the phone and the laptop read the file the same way.
+ * [markdown] is the file as it is. Without a TASKLIST.md, [exists] is false and [rows] empty.
+ */
+data class TodoList(
+    val cwd: String,
+    val path: String,
+    val exists: Boolean,
+    /** When the file last changed (ISO 8601), if PlasmaLLM says. */
+    val modified: String?,
+    val rows: List<TodoRow>,
+    val markdown: String,
+) {
+    val items: List<TodoRow.Item> get() = rows.filterIsInstance<TodoRow.Item>()
+    val openCount: Int get() = items.count { !it.done }
+    val doneCount: Int get() = items.count { it.done }
+
+    /**
+     * The rows to show: done items only with [showDone], and a heading only while something is
+     * shown under it (before the next heading of its level or higher), so a finished section
+     * doesn't stay as an empty title.
+     */
+    fun shownRows(showDone: Boolean): List<TodoRow> {
+        val shown = rows.filter { it !is TodoRow.Item || showDone || !it.done }
+        return shown.filterIndexed { i, row ->
+            row !is TodoRow.Heading ||
+                shown.drop(i + 1).takeWhile { it !is TodoRow.Heading || it.level > row.level }.any { it is TodoRow.Item }
+        }
+    }
+
+    companion object {
+        fun parse(o: JsonObject, askedCwd: String?): TodoList = TodoList(
+            cwd = o.str("cwd")?.ifEmpty { null } ?: askedCwd.orEmpty(),
+            path = o.str("path").orEmpty(),
+            exists = o.bool("exists") ?: true,
+            modified = o.str("modified")?.ifEmpty { null },
+            rows = o.arr("rows").orEmpty().mapNotNull { (it as? JsonObject)?.let(TodoRow::parse) },
+            markdown = o.str("markdown").orEmpty(),
+        )
+    }
+}
+
+/** A row of a [TodoList]: a heading, or an item under the latest one. */
+sealed interface TodoRow {
+    /** A Markdown heading; [level] is its count of #. */
+    data class Heading(val level: Int, val text: String) : TodoRow
+
+    /**
+     * An item (`- [ ]` or `- [x]`): [text] is its Markdown, with its indented lines (its notes)
+     * dedented, as the To do tab shows it. [section] is the heading above it, if any; [line]
+     * is its first line in the file, from 1.
+     */
+    data class Item(val done: Boolean, val text: String, val section: String?, val line: Int) : TodoRow {
+        /** Its first line, the item itself; the rest are its notes. */
+        val title: String get() = text.substringBefore('\n').trim()
+        val notes: String get() = text.substringAfter('\n', "").trimEnd()
+    }
+
+    companion object {
+        fun parse(o: JsonObject): TodoRow? {
+            val text = o.str("text") ?: return null
+            return if (o.bool("heading") == true) {
+                Heading(level = o.long("level")?.toInt()?.coerceIn(1, 6) ?: 2, text = text)
+            } else {
+                Item(
+                    done = o.bool("done") ?: false,
+                    text = text,
+                    section = o.str("section")?.ifBlank { null },
+                    line = o.long("line")?.toInt() ?: 0,
+                )
+            }
+        }
+    }
+}

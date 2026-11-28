@@ -211,8 +211,21 @@ agent. So the Chats list is listed again when that agent changes
 (`relistIfAgentChanged`). A bookmark keeps its `agentId` (none: Claude's), and
 `ChatState.agentNeededFor` sends a bookmark of another agent's chat to that
 agent's tab first, instead of having the wrong agent call it gone.
-`chatAgentName` names a non-Claude tab's agent ("Message Codex…"). Claude's
-tabs read as before.
+`ChatState.agentName` names the chat after its own tab's agent (`chatTab`: the
+tab shown, else the front one), never `initialize`'s `agentInfo`, which is
+whichever agent was in front when the device connected. So it's "Message
+Codex…" only in Codex's chat. Claude's tabs read as before.
+
+PlasmaLLM 17 shows a project folder's to-do list, TASKLIST.md, the one its To
+do tab keeps (`offersTodo`). ⋮ → "To do list" opens `TodoSheet` for the open
+chat's folder: `_plasmallm/todo {cwd}` answers `TodoList`, its `rows` the
+headings and items as PlasmaLLM reads them (an item's first line is its title,
+the rest its notes, shown on a tap). Open items show first, with headings left
+empty hidden. "Done" shows the rest, and "The file" shows the Markdown as it
+is. Read only. While the sheet is open, `_plasmallm/todo_changed {cwd}` for
+its folder reads it again (`AgentController.refreshTodo`), as does a
+reconnect. A list over 256 KB is refused (`too_big`) and said so. Ticking
+items is for a later protocol.
 
 PlasmaLLM 5 passes on turns from outside it, for a chat with Remote Control
 on: a message typed in the Claude app, or a turn Claude starts by itself. They

@@ -146,6 +146,15 @@ class AcpClient(
         rpc.request(PlasmaLlm.SHOW_TAB, buildJsonObject { put("tabId", tabId) })
     }
 
+    /**
+     * [cwd]'s to-do list, TASKLIST.md (protocol 17); null asks for the open chat's folder.
+     * PlasmaLLM then tells this connection when it changes ([PlasmaEvent.TodoChanged]).
+     */
+    suspend fun todo(cwd: String?): TodoList {
+        val result = rpc.request(PlasmaLlm.TODO_METHOD, buildJsonObject { if (!cwd.isNullOrEmpty()) put("cwd", cwd) })
+        return TodoList.parse(result as? JsonObject ?: JsonObject(emptyMap()), cwd)
+    }
+
     /** Close PlasmaLLM's tab [tabId] (protocol 15); [force] also while its agent works, cutting the turn. */
     suspend fun closeTab(tabId: String, force: Boolean = false) {
         rpc.request(

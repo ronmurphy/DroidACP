@@ -237,6 +237,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun listAgents() = controller.refreshAgents()
+                override fun openTodo(cwd: String?) = controller.openTodo(cwd)
+                override fun refreshTodo() = controller.refreshTodo()
+                override fun closeTodo() = controller.closeTodo()
 
                 override fun mustAskFor(agent: PlasmaAgent) = app.agentApprovals.needsAsking(agent)
 

@@ -16,6 +16,7 @@ import com.droidacp.core.acp.PlasmaLlm
 import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.SessionSetup
 import com.droidacp.core.acp.SessionUpdate
+import com.droidacp.core.acp.TodoList
 import com.droidacp.core.acp.Transport
 import com.droidacp.core.acp.TransportListener
 import com.droidacp.core.acp.WebSocketTransport
@@ -387,6 +388,64 @@ class AgentController(
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // A project folder's to-do list (protocol 17), read only
+    // ------------------------------------------------------------------
+
+    /** Show [cwd]'s to-do list (null: the open chat's folder), read from PlasmaLLM. */
+    fun openTodo(cwd: String? = null) {
+        val folder = cwd?.ifEmpty { null } ?: _state.value.folder.orEmpty()
+        // The same folder's list stays on screen while it's read again.
+        _state.update { it.copy(todo = TodoView(folder, list = it.todo?.takeIf { t -> samePath(t.cwd, folder) }?.list)) }
+        readTodo(folder)
+    }
+
+    /** Read the open list again: the user asked, or PlasmaLLM said it changed. */
+    fun refreshTodo() {
+        val todo = _state.value.todo ?: return
+        _state.update { s -> s.todo?.let { s.copy(todo = it.copy(loading = true, error = null)) } ?: s }
+        readTodo(todo.cwd)
+    }
+
+    fun closeTodo() {
+        _state.update { it.copy(todo = null) }
+    }
+
+    private fun readTodo(folder: String) {
+        val l = link?.takeIf { it.plasma && _state.value.offersTodo }
+        if (l == null) {
+            todoRead(folder, null, "DroidACP isn't connected to PlasmaLLM.")
+            return
+        }
+        l.scope.launch {
+            try {
+                todoRead(folder, l.client.todo(folder.ifEmpty { null }), null)
+            } catch (e: RpcException) {
+                val why = if (e.plasmaReason == PlasmaLlm.Reason.TOO_BIG) "This to-do list is too big to show here (over 256 KB)." else e.message
+                todoRead(folder, null, why ?: "PlasmaLLM couldn't read the to-do list.")
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                todoRead(folder, null, "Couldn't read the to-do list: ${e.message}")
+            }
+        }
+    }
+
+    /** [folder]'s list was read ([list]) or not ([error]); only for the list still open. */
+    private fun todoRead(folder: String, list: TodoList?, error: String?) {
+        _state.update { s ->
+            val t = s.todo
+            if (t == null || !samePath(t.cwd, folder)) {
+                s
+            } else {
+                // PlasmaLLM names the folder it read: the open chat's, when none was asked.
+                s.copy(todo = t.copy(cwd = list?.cwd?.ifEmpty { null } ?: t.cwd, list = list ?: t.list, loading = false, error = error))
+            }
+        }
+    }
+
+    /** One folder written two ways ("/p" and "/p/"); an empty one, the open chat's, matches any. */
+    private fun samePath(a: String, b: String): Boolean = a.isEmpty() || b.isEmpty() || a.trimEnd('/') == b.trimEnd('/')
 
     /**
      * Open a new PlasmaLLM tab with [agent] in [cwd] (empty: the front tab's folder), in front,
@@ -1014,6 +1073,8 @@ class AgentController(
                         plasmaLlm = hello,
                     )
                 }
+                // A list open on screen: PlasmaLLM only says when it changes after this connection reads it.
+                if (plasma) _state.value.todo?.let { readTodo(it.cwd) }
                 if (init.protocolVersion != AcpClient.PROTOCOL_VERSION.toLong()) {
                     _state.update {
                         Transcript.addNote(
@@ -1452,6 +1513,7 @@ class AgentController(
             when (val event = PlasmaEvent.parse(method, params)) {
                 is PlasmaEvent.State -> onHostState(event.chat, event.tabletTools, event.tabs)
                 is PlasmaEvent.Turn -> onHostTurn(event)
+                is PlasmaEvent.TodoChanged -> if (_state.value.todo?.let { samePath(it.cwd, event.cwd) } == true) refreshTodo()
                 is PlasmaEvent.PermissionResolved -> {
                     // Answered on the computer or another device (or dropped): close ours. Our
                     // "cancelled" reply is ignored by PlasmaLLM; it doesn't stop the turn.

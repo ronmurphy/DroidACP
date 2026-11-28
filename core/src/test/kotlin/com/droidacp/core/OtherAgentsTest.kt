@@ -89,7 +89,8 @@ class OtherAgentsTest {
     @Test
     fun theAgentsAndEachTabsAgentAreListed() = runBlocking {
         val c = connected()
-        assertEquals(15L, host.initParams?.obj("_meta")?.obj("plasmallm")?.long("protocol"), "DroidACP says it speaks 15")
+        assertEquals(PlasmaLlm.PROTOCOL.toLong(), host.initParams?.obj("_meta")?.obj("plasmallm")?.long("protocol"), "DroidACP says which it speaks")
+        assertTrue(PlasmaLlm.PROTOCOL >= PlasmaLlm.AGENTS)
         assertTrue(c.state.value.offersAgents)
         assertEquals(PlasmaLlm.CLAUDE, c.state.value.frontAgentId)
         assertEquals("t1", c.state.value.shownTab?.tabId)
@@ -298,6 +299,25 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
     @Volatile
     var newTabFails: String? = null
 
+    /** The companion protocol it speaks: 15, or 17 with the to-do list. */
+    @Volatile
+    var protocol = 15
+
+    /** `_plasmallm/todo`'s answer (protocol 17); null: no TASKLIST.md in the folder. */
+    @Volatile
+    var todo: JsonObject? = null
+
+    /** `_plasmallm/todo` fails with this reason instead, e.g. `too_big`. */
+    @Volatile
+    var todoError: String? = null
+
+    /** The folder's list changed: `_plasmallm/todo_changed`. */
+    fun todoChanged(cwd: String) = deliver(buildJsonObject {
+        put("jsonrpc", "2.0")
+        put("method", PlasmaLlm.TODO_CHANGED)
+        put("params", buildJsonObject { put("cwd", cwd) })
+    })
+
     /** A new agent tab waits for [answerNewTab] after it's listed as starting. */
     @Volatile
     var holdNewTab = false
@@ -348,7 +368,7 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
                     put("authMethods", buildJsonArray {})
                     putJsonObject("_meta") {
                         putJsonObject("plasmallm") {
-                            put("protocol", 15)
+                            put("protocol", protocol)
                             put("version", "1.0")
                             put("sessionId", frontTab.sessionId)
                             put("cwd", frontTab.cwd)
@@ -419,6 +439,18 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
                     chats.forEach { c -> add(buildJsonObject { put("sessionId", c); put("cwd", params.str("cwd") ?: "") }) }
                 })
             })
+            PlasmaLlm.TODO_METHOD -> {
+                val cwd = params.str("cwd") ?: frontTab.cwd
+                val reason = todoError
+                if (reason != null) return error(id, -32602, "Plasma LLM couldn't read the to-do list.", reason)
+                reply(id, todo ?: buildJsonObject {
+                    put("cwd", cwd)
+                    put("path", "$cwd/TASKLIST.md")
+                    put("exists", false)
+                    put("rows", buildJsonArray {})
+                    put("markdown", "")
+                })
+            }
             PlasmaLlm.SHOW_TAB -> {
                 val tab = tabs.firstOrNull { it.tabId == params.str("tabId") }
                 if (tab == null) return error(id, -32602, "Plasma LLM has no such tab now.", "no_tab")
