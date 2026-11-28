@@ -50,6 +50,37 @@ class PixelPeopleTest {
         }
         for (ch in ('A'..'Z') + ('0'..'9')) assertTrue(ch in people.letters, "letter $ch")
         assertTrue(!people.render("talk", Look(letter = 'D')).pixels.contentEquals(base), "the letter shows")
+        for (a in listOf("santahat", "antlers", "earmuffs", "partyhat", "rednose")) assertTrue(a in people.accessories, "accessory $a")
+    }
+
+    @Test
+    fun pantsShortsSkirtsAndDresses() {
+        assertEquals(listOf("pants", "shorts", "skirt", "dress"), people.bottoms)
+        assertEquals("navy", people.bottomColors.first())
+        // Everyone wore navy pants before there was a choice, and still does until choosing.
+        val navy = 0xFF3A4766.toInt()
+        for (pose in listOf("sleep", "laptop", "talk", "stop", "helper")) {
+            assertTrue(navy in people.render(pose, Look()).pixels, "$pose: navy pants")
+        }
+        assertTrue(people.render("talk", Look()).pixels.contentEquals(people.render("talk", Look(bottom = "jeans", bottomColor = "plaid")).pixels), "unknown ones are the default")
+        val base = people.render("talk", Look()).pixels
+        for (pose in listOf("talk", "laptop", "sleep", "helper")) {
+            val pants = people.render(pose, Look()).pixels
+            for (b in people.bottoms.drop(1)) {
+                assertTrue(!people.render(pose, Look(bottom = b)).pixels.contentEquals(pants), "$pose: $b")
+            }
+        }
+        for (c in people.bottomColors.drop(1)) {
+            assertTrue(!people.render("talk", Look(bottomColor = c)).pixels.contentEquals(base), "bottom colour $c")
+        }
+        // A skirt is its colour; a dress is the shirt's, whatever bottom colour is chosen.
+        val red = 0xFFD64545.toInt()
+        val skirt = people.render("talk", Look(shirt = "teal", bottom = "skirt", bottomColor = "red")).pixels
+        assertTrue(red in skirt, "a red skirt")
+        val dress = people.render("talk", Look(shirt = "teal", bottom = "dress", bottomColor = "red")).pixels
+        assertTrue(red !in dress && navy !in dress, "a dress takes the shirt's colour")
+        // The break room's couch stays navy whatever anyone wears.
+        assertTrue(people.render("room", Look(bottomColor = "red")).pixels.contentEquals(people.render("room", Look()).pixels))
     }
 
     @Test
@@ -160,5 +191,19 @@ class PixelPeopleTest {
         assertEquals(null, b.shirt, "an unknown shirt is the agent's colours")
         assertEquals("claude", b.agent)
         assertNotEquals(strip[0].look, strip[1].look)
+        assertEquals(listOf("pants", "navy"), listOf(b.bottom, b.bottomColor), "no bottom chosen: navy pants")
+
+        // A bottom and its colour (more clothes); unknown ones keep navy pants.
+        val dressed = tabs.map {
+            when (it.sessionId) {
+                "chat-b" -> it.copy(person = PlasmaPerson("dark", "bob", "black", listOf("santahat"), 'P', "red", "skirt", "denim"))
+                "chat-c" -> it.copy(person = PlasmaPerson("pale", "long", "ginger", emptyList(), 'T', null, "kilt", "tartan"))
+                else -> it
+            }
+        }
+        val dressedLooks = state.copy(plasmaLlm = state.plasmaLlm.copy(tabs = dressed)).stripPeople()
+        assertEquals(listOf("skirt", "denim"), listOf(dressedLooks[1].look.bottom, dressedLooks[1].look.bottomColor))
+        assertEquals(listOf("santahat"), dressedLooks[1].look.accessories)
+        assertEquals(listOf("pants", "navy"), listOf(dressedLooks[2].look.bottom, dressedLooks[2].look.bottomColor))
     }
 }

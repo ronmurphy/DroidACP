@@ -3,8 +3,9 @@
 
     python3 -I tools/pixelpeople/preview.py out.png [look...]
 
-A look is key=value pairs: skin= hair= haircolor= acc=a,b letter= shirt= agent= (the
-option and agent ids in sprites.txt; no shirt= means the agent's colours). Each person
+A look is key=value pairs: skin= hair= haircolor= acc=a,b letter= shirt= agent= bottom=
+bottomcolor= (the option and agent ids in sprites.txt; no shirt= means the agent's
+colours; bottom= is pants, shorts, skirt or dress, default pants in navy). Each person
 stands on its agent's bar. The Kotlin renderer (core/.../people/PixelPeople.kt) draws the
 same way.
 """
@@ -27,7 +28,7 @@ def parse(path):
         if not s or s.startswith("#"):
             continue
         w = s.split()
-        if w[0] in ("palette", "option", "agent", "face", "hair", "accessory", "part", "pose", "sign", "glyph"):
+        if w[0] in ("palette", "option", "agent", "face", "hair", "accessory", "bottom", "part", "pose", "sign", "glyph"):
             cur = {"kind": w[0], "name": w[1] if len(w) > 1 else "", "args": w[2:], "lines": [], "grids": []}
             secs.append(cur)
             if w[0] == "glyph":
@@ -51,7 +52,7 @@ def mix(a, b, t):
     return tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(3)) + (255,)
 
 def build(secs):
-    d = {"palette": {}, "options": {}, "agents": {}, "hair": {}, "acc": {}, "part": {}, "pose": {}, "effect": {}, "glyph": {}, "head": None}
+    d = {"palette": {}, "options": {}, "agents": {}, "hair": {}, "acc": {}, "bottom": {}, "part": {}, "pose": {}, "effect": {}, "glyph": {}, "head": None}
     for s in secs:
         k = s["kind"]
         if k == "palette":
@@ -69,6 +70,8 @@ def build(secs):
             d["hair"][s["name"]] = s
         elif k == "accessory":
             d["acc"][s["name"]] = s
+        elif k == "bottom":
+            d["bottom"][s["name"]] = s
         elif k == "part":
             d["part"][s["name"]] = s["grids"][0]
         elif k == "pose":
@@ -91,11 +94,26 @@ def render(d, pose, look):
     pal.update({"S": skin, "s": shade(skin, 0.85), "r": mix(skin, (224, 112, 122), 0.35), "H": hairc, "h": shade(hairc, 0.75)})
     lum = sum(0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2] for c in shirt) / len(shirt)
     pal["L"] = pal["k"] if lum > 150 else pal["W"]
+    # Pants, shorts, a skirt or a dress: its grids stand in for the parts they're named
+    # after, in its colour (J j), or the shirt's for a dress.
+    bottom = d["bottom"].get(look.get("bottom") or "pants") or next(iter(d["bottom"].values()), None)
+    in_shirt = bool(bottom) and any(l[0] == "color" and l[1] == "shirt" for l in bottom["lines"] if l[0] != "grid")
+    bcs = d["options"].get("bottomcolor", {})
+    bkey = look.get("bottomcolor") if look.get("bottomcolor") in bcs else next(iter(bcs), None)
+    if bkey:
+        legs = hexc(bcs[bkey][0])
+        legs_shade = hexc(bcs[bkey][1]) if len(bcs[bkey]) > 1 else shade(legs, 0.8)
+    else:
+        legs, legs_shade = pal["P"], pal["p"]
     def color(ch, x, y):
-        if ch == "T":
+        if ch == "T" or (ch == "J" and in_shirt):
             return shirt[y % len(shirt)] if len(shirt) > 1 else shirt[0]
-        if ch == "t":
+        if ch == "t" or (ch == "j" and in_shirt):
             return shade(shirt[y % len(shirt)] if len(shirt) > 1 else shirt[0], 0.8)
+        if ch == "J":
+            return legs
+        if ch == "j":
+            return legs_shade
         return pal.get(ch)
     def stamp(rows, ox, oy, extra=None):
         for j, row in enumerate(rows):
@@ -142,8 +160,9 @@ def render(d, pose, look):
                 stamp(g["rows"], hx + g["x"], hy + g["y"])
     for l in p["lines"]:
         if l[0] == "use":
-            g = d["part"][l[1]]
-            stamp(g["rows"], int(l[2]), int(l[3]))
+            g = next((g for g in bottom["grids"] if g["label"] == l[1]), None) if bottom else None
+            g = g or d["part"][l[1]]
+            stamp(g["rows"], int(l[2]) + g["x"], int(l[3]) + g["y"])
         elif l[0] == "grid":
             stamp(l[1]["rows"], l[1]["x"], l[1]["y"])
         elif l[0] == "@head":
@@ -202,6 +221,10 @@ def main():
             looks.append(dict(look, agent=ag, letter=ag[0])); poses.append(pose)
         for sh in d["options"].get("shirt", {}):
             looks.append(dict(look, shirt=sh, letter=sh[0])); poses.append(pose)
+        for b in d["bottom"]:
+            looks.append(dict(look, bottom=b)); poses.append(pose)
+        for bc in d["options"].get("bottomcolor", {}):
+            looks.append(dict(look, bottomcolor=bc, letter=bc[0])); poses.append(pose)
     scale, cols = int(look.get("scale", 5)), int(look.get("cols", 8))
     rows = (len(poses) + cols - 1) // cols
     ch = H + BAR_H + 2  # a cell: the person, its bar, and a pixel's gap below

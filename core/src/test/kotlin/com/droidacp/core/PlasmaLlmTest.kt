@@ -490,6 +490,8 @@ class PlasmaLlmTest {
             put("accessories", buildJsonArray { add(JsonPrimitive("scarf")) })
             put("letter", "D")
             put("shirt", "green")
+            put("bottom", "skirt")
+            put("bottomcolor", "denim")
         }
         val state = PlasmaEvent.parse(
             PlasmaLlm.STATE,
@@ -501,7 +503,7 @@ class PlasmaLlmTest {
         ) as PlasmaEvent.State
         assertEquals(
             listOf(
-                PlasmaPerson("light", "curly", "auburn", listOf("scarf"), 'D', "green"),
+                PlasmaPerson("light", "curly", "auburn", listOf("scarf"), 'D', "green", "skirt", "denim"),
                 PlasmaPerson("dark", "bald", null, listOf("glasses", "scarf"), null),
                 null,
             ),
