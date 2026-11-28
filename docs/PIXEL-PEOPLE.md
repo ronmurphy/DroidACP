@@ -67,16 +67,23 @@ its shirt and its agent's colours as the shirt.
 PlasmaLLM keeps the choices: each agent calls its `pixel_person` tool once per project (only
 the user can let it choose again, in PlasmaLLM's settings), and PlasmaLLM sends the look as
 each tab's `person` in `_plasmallm/state` (companion protocol 10). DroidACP draws an id it
-doesn't know as that part of the default look.
+doesn't know as that part of the default look. An agent can also change its clothes once a
+day with PlasmaLLM's `get_dressed`: the shirt, accessories, letter and, once PlasmaLLM
+offers them, its bottom and its colour. Skin and hair stay as it designed them.
 
 | Option | Ids |
 | --- | --- |
 | `skin` | `pale`, `light`, `medium-light`, `medium`, `medium-dark`, `dark` |
 | `hair` | `short`, `long`, `bob`, `spiky`, `curly`, `bun`, `ponytail`, `mohawk`, `buzz`, `swoop`, `bald` |
 | `haircolor` | `black`, `dark-brown`, `brown`, `auburn`, `ginger`, `blond`, `platinum`, `grey`, `white`, `blue`, `teal`, `green`, `pink`, `purple`, `red` |
-| `accessories` (up to 2) | `glasses`, `roundglasses`, `sunglasses`, `cap`, `beanie`, `beret`, `headphones`, `bow`, `flower`, `headband`, `crown`, `earring`, `bowtie`, `scarf` |
+| `accessories` (up to 2) | `glasses`, `roundglasses`, `sunglasses`, `cap`, `beanie`, `beret`, `headphones`, `bow`, `flower`, `headband`, `crown`, `earring`, `bowtie`, `scarf`; for the holidays, `santahat`, `antlers`, `earmuffs`, `partyhat`, `rednose` |
 | `letter` | `A`-`Z`, `0`-`9`, or none |
 | `shirt` | `red`, `orange`, `yellow`, `lime`, `green`, `teal`, `cyan`, `blue`, `navy`, `purple`, `pink`, `maroon`, `brown`, `grey`, `black`, `white`, or none (the agent's colours) |
+| `bottom` | `pants` (the default), `shorts`, `skirt`, `dress` (in the shirt's colour, down to the knees) |
+| `bottomcolor` | `navy` (the default: everyone's pants before there was a choice), `red`, `orange`, `yellow`, `lime`, `green`, `teal`, `cyan`, `blue`, `purple`, `pink`, `maroon`, `brown`, `grey`, `black`, `white`, `denim`, `khaki`; for pants, shorts and skirts |
+
+Any agent may wear any of them: the user asked for "any gender of clothes", and for some for
+the holidays (2026-11-28). They're its own choice, and nobody has to dress up.
 
 Each person stands on a short bar in its agent's colours, so people from different agents
 stay apart whatever they wear. The idea is the user's: "the bar ... frees up the shirt for
@@ -100,8 +107,9 @@ running.
 ## The sprite file
 
 `core/src/main/resources/com/droidacp/core/people/sprites.txt` is the one description of
-the people: the palette, the options, the head, hair and accessories, shared parts (torsos,
-legs, the chair), the poses and their bubbles, and a 3 x 5 font for the shirt's letter. Its
+the people: the palette, the options, the head, hair and accessories, the bottoms (whose
+grids stand in for the shared legs), shared parts (torsos, legs, the chair), the poses and
+their bubbles, and a 3 x 5 font for the shirt's letter. Its
 format is described at its top. It's plain text so other apps (TabDesk) can draw the same
 people from the same file.
 
@@ -109,7 +117,9 @@ people from the same file.
   ARGB pixels); `app/.../ui/PeopleStrip.kt` draws them at a whole number of screen pixels
   per sprite pixel, with no smoothing.
 - **Looking at them while drawing:** `python3 -I tools/pixelpeople/preview.py out.png`
-  draws every pose; `sheet=looks` draws every hair style, accessory and shirt;
-  `poses=think:talk scale=10` draws a few bigger.
+  draws every pose; `sheet=looks` draws every hair style, accessory, shirt, bottom and
+  bottom colour; `poses=think:talk scale=10` draws a few bigger; `bottom=skirt
+  bottomcolor=denim` dresses them.
 - **Tests:** `PixelPeopleTest` draws every pose and option, and checks the shirts, the
-  default looks, the activity of a chat and the strip's people.
+  bottoms (navy pants until chosen, a dress in the shirt's colour), the default looks, the
+  activity of a chat and the strip's people.

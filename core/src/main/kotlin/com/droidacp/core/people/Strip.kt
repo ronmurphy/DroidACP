@@ -61,7 +61,7 @@ fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<Strip
             agent = agentName?.let(::agentLabel) ?: tab.agentTitle,
             chatTitle = tab.title,
             look = people.defaultLook(tab.cwd.ifEmpty { tab.sessionId }, colors, name.firstOrNull()).let { default ->
-                tab.person?.let { p -> people.chosen(default, p.skin, p.hair, p.hairColor, p.accessories, p.letter, p.shirt) } ?: default
+                tab.person?.let { p -> people.chosen(default, p.skin, p.hair, p.hairColor, p.accessories, p.letter, p.shirt, p.bottom, p.bottomColor) } ?: default
             },
             activity = when {
                 isThis -> activity

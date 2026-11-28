@@ -445,8 +445,9 @@ data class PlasmaAgent(
 /**
  * The look an agent chose once for its Pixel Person (`tabs[].person`, protocol 10): option
  * ids of DroidACP's `sprites.txt`. [hairColor] may be missing (bald), [letter] is null for
- * none, [shirt] null for the agent's own colours. Ids DroidACP doesn't know are drawn as
- * that part of the default look.
+ * none, [shirt] null for the agent's own colours. [bottom] (pants, shorts, skirt, dress)
+ * and [bottomColor] are null until it chooses them: navy pants. Ids DroidACP doesn't know
+ * are drawn as that part of the default look.
  */
 data class PlasmaPerson(
     val skin: String?,
@@ -455,6 +456,8 @@ data class PlasmaPerson(
     val accessories: List<String>,
     val letter: Char?,
     val shirt: String? = null,
+    val bottom: String? = null,
+    val bottomColor: String? = null,
 ) {
     companion object {
         fun parse(o: JsonObject): PlasmaPerson = PlasmaPerson(
@@ -464,6 +467,8 @@ data class PlasmaPerson(
             accessories = o.arr("accessories")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty(),
             letter = o.str("letter")?.trim()?.singleOrNull(),
             shirt = o.str("shirt")?.ifBlank { null },
+            bottom = o.str("bottom")?.ifBlank { null },
+            bottomColor = o.str("bottomcolor")?.ifBlank { null },
         )
     }
 }
