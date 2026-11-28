@@ -215,7 +215,7 @@ fun ChatScreen(
                             .padding(end = 4.dp),
                     ) {
                         Column(Modifier.weight(1f, fill = false)) {
-                            Text(state.sessionTitle ?: state.chatAgentName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(state.sessionTitle ?: state.agentName, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 text = subtitle(state),
                                 style = MaterialTheme.typography.labelMedium,
@@ -438,16 +438,16 @@ private fun connectingText(state: ChatState): String {
 private fun stopWarning(state: ChatState, newChat: Boolean): String {
     val plasma = state.plasmaLlm
     return when {
-        plasma == null -> "${state.chatAgentName} is working on this chat. Opening another one stops that work."
+        plasma == null -> "${state.agentName} is working on this chat. Opening another one stops that work."
         // PlasmaLLM 8 lists its tabs, so this is asked only when the chat would be replaced.
         plasma.tabs != null -> {
             val opens = if (newChat) "A new chat opens in this chat's PlasmaLLM tab" else "That chat isn't open in a PlasmaLLM tab, so it opens in this one"
-            "${state.chatAgentName} is working on this chat. $opens, which stops the work here, even if it was started on the " +
+            "${state.agentName} is working on this chat. $opens, which stops the work here, even if it was started on the " +
                 "computer, and drops anything the agent planned to come back to here (its wake_me). Chats open in other tabs " +
                 "don't stop anything."
         }
         else -> {
-            val stops = "${state.chatAgentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
+            val stops = "${state.agentName} is working on this chat. Opening another one stops that work, even if it was started on the " +
                 "computer, and drops anything the agent planned to come back to in this chat (its wake_me)."
             // PlasmaLLM with tabs: a chat open in another tab comes to the front, and this one goes on in its own.
             if (plasma.protocol >= 4) "$stops If the chat you open is in another PlasmaLLM tab, this one keeps working in its tab instead." else stops
@@ -472,7 +472,7 @@ private fun subtitle(state: ChatState): String {
         state.tabProblem != null && state.sessionId == null -> "No chat in this tab"
         // The title line shows the chat; this one says where it is.
         else -> listOfNotNull(
-            state.chatAgentName.takeIf { state.sessionTitle != null },
+            state.agentName.takeIf { state.sessionTitle != null },
             state.folder?.let(::shortFolder),
             state.currentModeName,
         ).joinToString(" · ").ifEmpty { "Ready" }
@@ -520,8 +520,8 @@ private fun MessageList(state: ChatState, listState: LazyListState, side: Dp, de
                             // A file being copied, say: on its card in the developer view.
                             !developer && state.toolProgressNow != null -> state.toolProgressNow.orEmpty()
                             // A prompt typed in PlasmaLLM's window or on another device.
-                            state.remoteTurn -> "${state.chatAgentName} is working on a message sent from another screen…"
-                            else -> "${state.chatAgentName} is working…"
+                            state.remoteTurn -> "${state.agentName} is working on a message sent from another screen…"
+                            else -> "${state.agentName} is working…"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -643,10 +643,10 @@ private fun EmptyChat(state: ChatState) {
     ) {
         Text("👋", style = MaterialTheme.typography.displayMedium)
         Spacer(Modifier.height(12.dp))
-        // A PlasmaLLM tab with another agent than Claude (protocol 15) names it: "Codex, in Plasma LLM".
-        val who = if (state.chatAgentName != state.agentName) "${state.chatAgentName}, in ${state.agentName}" else state.agentName
+        // A PlasmaLLM tab names its own agent (protocol 15): "Codex, in Plasma LLM".
+        val who = if (state.offersAgents) "${state.agentName}, in Plasma LLM" else state.agentName
         Text("Connected to $who", style = MaterialTheme.typography.titleMedium)
-        val version = state.agent?.version
+        val version = state.agentVersion
         if (version != null) Text("version $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
         Text(

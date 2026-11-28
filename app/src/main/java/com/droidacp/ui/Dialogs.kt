@@ -183,7 +183,7 @@ fun SessionSettingsSheet(
             SectionTitle("About this connection")
             SelectionContainer {
                 Column {
-                    InfoLine("Agent", listOfNotNull(state.agent?.displayName, state.agent?.version).joinToString(" "))
+                    InfoLine("Agent", listOfNotNull(state.agentName.takeIf { state.agent != null }, state.agentVersion).joinToString(" "))
                     val plasma = state.plasmaLlm
                     InfoLine(if (state.profile?.kind == ProfileKind.Bridge) "Bridge" else "Runs", state.profile?.address ?: "")
                     if (plasma != null) InfoLine("PlasmaLLM", listOfNotNull(plasma.version, "companion protocol ${plasma.protocol}").joinToString(", "))

@@ -294,14 +294,31 @@ data class ChatState(
             ?: if (agentId == PlasmaLlm.CLAUDE) "Claude" else agentId
 
     val currentModeName: String? get() = modes.firstOrNull { it.id == currentModeId }?.name ?: currentModeId
-    val agentName: String get() = agent?.displayName ?: profile?.name ?: "Agent"
 
     /**
-     * Who the open chat is with: [agentName], or for a PlasmaLLM tab running another agent than
-     * Claude (protocol 15), that agent ("Codex").
+     * The PlasmaLLM tab the open chat is in, or the one in front while it has none, when it says
+     * which agent it runs (protocol 15).
      */
-    val chatAgentName: String
-        get() = shownTab?.takeIf { offersAgents && it.agentId != null && it.agentId != PlasmaLlm.CLAUDE }?.let(::agentLabel) ?: agentName
+    private val chatTab: PlasmaTab?
+        get() = if (!offersAgents) null else (shownTab ?: frontTab)?.takeIf { it.agentId != null }
+
+    /**
+     * Who the open chat is with. With PlasmaLLM 15, its tab's agent ("Claude Agent", "Codex"),
+     * since [agent] is whichever was in front when this device connected, maybe another tab's.
+     */
+    val agentName: String
+        get() = chatTab?.let(::agentLabel) ?: agent?.displayName ?: profile?.name ?: "Agent"
+
+    /**
+     * [agentName]'s version: for a PlasmaLLM tab (protocol 15), the list of agents' version for
+     * it, or [agent]'s when that's the same agent.
+     */
+    val agentVersion: String?
+        get() {
+            val tab = chatTab ?: return agent?.version
+            return plasmaAgents?.firstOrNull { it.id == tab.agentId }?.version
+                ?: agent?.takeIf { tab.agentName != null && it.name == tab.agentName }?.version
+        }
 
     /**
      * The open chat's folder. For PlasmaLLM it's the folder open there, as its state
