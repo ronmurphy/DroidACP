@@ -114,7 +114,7 @@ private fun AttachmentView(block: ContentBlock) {
 @Composable
 fun AgentImage(image: ContentBlock.Image) {
     val decoder = LocalImageDecoder.current
-    val bitmap = remember(image.data) { decoder.decode(image.data) }
+    val bitmap = remember(image.data) { decoder.decode(image.data, ImageDecoder.IN_CHAT) }
     var open by remember { mutableStateOf(false) }
     if (bitmap == null) {
         Text("🖼 image (${image.mimeType})", style = MaterialTheme.typography.bodySmall)
