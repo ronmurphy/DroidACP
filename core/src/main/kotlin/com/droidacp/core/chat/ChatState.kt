@@ -15,6 +15,7 @@ import com.droidacp.core.acp.PlasmaTab
 import com.droidacp.core.acp.Plan
 import com.droidacp.core.acp.SessionMode
 import com.droidacp.core.acp.SessionSummary
+import com.droidacp.core.acp.TodoList
 import com.droidacp.core.acp.ToolCall
 import com.droidacp.core.tablet.TabletStatus
 
@@ -127,6 +128,17 @@ data class TabProblem(
     val signIn: Boolean,
 )
 
+/**
+ * A project folder's to-do list, open on the phone (protocol 17): [list] as last read, kept while
+ * it's read again; [error] says why the last reading failed.
+ */
+data class TodoView(
+    val cwd: String,
+    val list: TodoList? = null,
+    val loading: Boolean = true,
+    val error: String? = null,
+)
+
 data class UsageInfo(val used: Long, val size: Long, val costAmount: Double?, val costCurrency: String?) {
     val fraction: Float get() = if (size > 0) (used.toFloat() / size).coerceIn(0f, 1f) else 0f
 }
@@ -202,9 +214,14 @@ data class ChatState(
     val startingAgent: PlasmaAgent? = null,
     /** The new tab's agent didn't start a chat; see [TabProblem]. */
     val tabProblem: TabProblem? = null,
+    /** A folder's to-do list, open on the phone (protocol 17); null when it isn't. */
+    val todo: TodoView? = null,
     val nextKey: Long = 1,
 ) {
     val isConnected: Boolean get() = status == ConnectionStatus.Connected
+
+    /** PlasmaLLM shows a project's to-do list (protocol 17). */
+    val offersTodo: Boolean get() = isConnected && (plasmaLlm?.protocol ?: 0) >= PlasmaLlm.TODO
 
     /** [approvalElsewhere] as shown: only during a turn, so one left over never shows after it. */
     val waitingElsewhere: Set<String> get() = if (busy) approvalElsewhere else emptySet()

@@ -127,6 +127,11 @@ interface ChatActions {
     /** Bring PlasmaLLM's tab [tabId] to the front. Null when done, else why not. */
     suspend fun showTab(tabId: String): String?
 
+    /** Show [cwd]'s to-do list (protocol 17; null: the open chat's folder), into [ChatState.todo]. */
+    fun openTodo(cwd: String?)
+    fun refreshTodo()
+    fun closeTodo()
+
     /** The composer took the text of a message that couldn't be sent from a notification. */
     fun draftUsed()
     fun reconnect()
@@ -240,6 +245,9 @@ fun ChatScreen(
                             if (state.isConnected) {
                                 DropdownMenuItem(text = { Text("New chat") }, onClick = { menuOpen = false; switchChat(null) { actions.newChat(null) } })
                                 DropdownMenuItem(text = { Text("Chats and bookmarks") }, onClick = { menuOpen = false; openChats() })
+                                if (state.offersTodo) {
+                                    DropdownMenuItem(text = { Text("To do list") }, onClick = { menuOpen = false; actions.openTodo(null) })
+                                }
                                 // 🛑 at any time, not only while the bar shows (plan D20).
                                 state.tablet?.let { tablet ->
                                     if (tablet.held) {
@@ -348,6 +356,7 @@ fun ChatScreen(
         PermissionDialog(permission, tool?.call, onAnswer = { optionId -> actions.answerPermission(permission.requestId, optionId) })
     }
     if (settingsOpen) SessionSettingsSheet(state, actions, developer, atContext = settingsAtContext, onDismiss = { settingsOpen = false })
+    if (state.todo != null) TodoSheet(state, actions, onDismiss = actions::closeTodo)
     if (chatsOpen) ChatsSheet(state, chats, actions, onSwitch = { id, go -> switchChat(id, go) }, onDismiss = { chatsOpen = false })
     // Under the stop question: answering it ("Keep working") brings this one back.
     val elsewhere = state.openElsewhere
