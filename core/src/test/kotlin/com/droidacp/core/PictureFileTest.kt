@@ -45,6 +45,18 @@ class PictureFileTest {
     }
 
     @Test
+    fun aBigPictureIsReadShrunkByHalvesUntilItFits() {
+        assertEquals(1, PictureFile.sampleSize(320, 200, 1536), "a small one as it is")
+        assertEquals(1, PictureFile.sampleSize(1536, 1000, 1536), "one that just fits")
+        assertEquals(2, PictureFile.sampleSize(1537, 10, 1536), "one pixel over")
+        // A 50 MP phone photo: 1020 px in the chat, 4080 px full screen.
+        assertEquals(8, PictureFile.sampleSize(8160, 6120, 1536))
+        assertEquals(2, PictureFile.sampleSize(8160, 6120, 4096))
+        assertEquals(4, PictureFile.sampleSize(100, 6000, 2048), "the long side counts, either way round")
+        assertEquals(8192, PictureFile.sampleSize(8192, 1, 0), "no endless loop on a nonsense limit")
+    }
+
+    @Test
     fun itsNameSaysWhenItWasSaved() {
         val p = PictureFile.of(b64(jpeg), "image/jpeg")!!
         assertEquals("DroidACP-20261127-221530.jpg", p.name(LocalDateTime.of(2026, 11, 27, 22, 15, 30)))

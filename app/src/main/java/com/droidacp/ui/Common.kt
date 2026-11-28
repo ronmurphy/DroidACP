@@ -10,10 +10,22 @@ import androidx.compose.ui.graphics.ImageBitmap
 
 /** Turns base64 image data from the agent into something Compose can draw. Provided by the Android side. */
 fun interface ImageDecoder {
-    fun decode(base64: String): ImageBitmap?
+    /**
+     * [base64] as a bitmap at most [maxEdge] pixels on its long side, shrunk by halves as it's
+     * read (a 50 MP photo at full size would be 200 MB), or null if it can't be read.
+     */
+    fun decode(base64: String, maxEdge: Int): ImageBitmap?
+
+    companion object {
+        /** In the chat, at most 320 dp high: enough for a tablet's column. */
+        const val IN_CHAT = 1536
+
+        /** Full screen, to zoom into. */
+        const val FULL_SCREEN = 4096
+    }
 }
 
-val LocalImageDecoder = compositionLocalOf { ImageDecoder { null } }
+val LocalImageDecoder = compositionLocalOf { ImageDecoder { _, _ -> null } }
 
 /** An image the user picked to send with the next message. */
 data class AttachmentThumb(val id: Long, val image: ImageBitmap?)

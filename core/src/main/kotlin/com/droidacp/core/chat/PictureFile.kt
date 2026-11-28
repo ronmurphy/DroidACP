@@ -32,6 +32,18 @@ data class PictureFile(val bytes: ByteArray, val mimeType: String, val extension
             "image/avif" to "avif",
         )
 
+        /**
+         * The power of two to shrink a [width]×[height] picture by as it's read (Android's
+         * `inSampleSize`), so its long side is at most [maxEdge]: 1 when it already fits.
+         */
+        fun sampleSize(width: Int, height: Int, maxEdge: Int): Int {
+            val edge = maxOf(width, height)
+            val most = maxEdge.coerceAtLeast(1)
+            var sample = 1
+            while (edge / sample > most) sample *= 2
+            return sample
+        }
+
         /** An ACP image block's [base64] data (a `data:` URL's too) and [mimeType]; null if it isn't base64. */
         fun of(base64: String, mimeType: String): PictureFile? {
             val data = if (base64.startsWith("data:")) base64.substringAfter(',', "") else base64

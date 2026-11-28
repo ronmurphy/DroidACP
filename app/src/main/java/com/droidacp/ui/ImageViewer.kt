@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,13 +55,19 @@ private const val DOUBLE_TAP_ZOOM = 2.5f
 
 /**
  * A picture from the chat, full screen: pinch or double-tap to zoom, drag to look around
- * while zoomed. Back or ✕ closes it. With its [source], *Save* puts it in Pictures/DroidACP
+ * while zoomed, a sharper copy than the chat's once it's read. Back or ✕ closes it. With its [source], *Save* puts it in Pictures/DroidACP
  * (Android 10+) and *Share* offers it to other apps, as the agent sent it.
  */
 @Composable
 fun ImageViewer(bitmap: ImageBitmap, description: String, source: ContentBlock.Image? = null, onDismiss: () -> Unit) {
     // The activity's context, from outside the dialog, to start the share sheet.
     val context = LocalContext.current
+    // The chat's copy at once, then a sharper one to zoom into, read off the main thread.
+    val decoder = LocalImageDecoder.current
+    val shown by produceState(bitmap, source) {
+        val data = source?.data ?: return@produceState
+        withContext(Dispatchers.Default) { decoder.decode(data, ImageDecoder.FULL_SCREEN) }?.let { value = it }
+    }
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_LONG).show()
@@ -133,7 +140,7 @@ fun ImageViewer(bitmap: ImageBitmap, description: String, source: ContentBlock.I
                 },
         ) {
             Image(
-                bitmap = bitmap,
+                bitmap = shown,
                 contentDescription = description,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier

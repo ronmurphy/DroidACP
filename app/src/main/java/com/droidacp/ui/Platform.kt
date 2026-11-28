@@ -9,16 +9,29 @@ import android.util.Base64
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.exifinterface.media.ExifInterface
+import com.droidacp.core.chat.PictureFile
 import java.io.ByteArrayOutputStream
 
 // Android-only image helpers.
 
 /** Decodes base64 images sent by the agent. */
 object AndroidImageDecoder : ImageDecoder {
-    override fun decode(base64: String): ImageBitmap? = try {
+    override fun decode(base64: String, maxEdge: Int): ImageBitmap? = try {
         val bytes = Base64.decode(base64, Base64.DEFAULT)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        // Its size first, then read at the power-of-two shrink that fits.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            null
+        } else {
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = PictureFile.sampleSize(bounds.outWidth, bounds.outHeight, maxEdge)
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+        }
     } catch (e: IllegalArgumentException) {
+        null
+    } catch (e: OutOfMemoryError) {
         null
     }
 }
