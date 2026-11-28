@@ -21,6 +21,7 @@ import com.droidacp.core.rpc.bool
 import com.droidacp.core.rpc.long
 import com.droidacp.core.rpc.obj
 import com.droidacp.core.rpc.str
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +38,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import java.net.SocketTimeoutException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import kotlin.test.AfterTest
@@ -54,7 +56,9 @@ import kotlin.test.assertTrue
  * `docs/companion-protocol.md`, "Other agents (version 15)".
  */
 class OtherAgentsTest {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** What escaped the controller's jobs: on Android, each would have crashed the app. */
+    private val crashes = CopyOnWriteArrayList<Throwable>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> crashes += e })
     private val hosts = CopyOnWriteArrayList<FakeTabbedPlasma>()
     private val host: FakeTabbedPlasma get() = hosts.last()
 
@@ -129,6 +133,21 @@ class OtherAgentsTest {
         assertFalse(s.busy, "Claude's turn goes on in its own tab, not here")
         assertTrue(s.otherTabs.single().busy, "…and it's still working there")
         assertTrue(host.requests.none { it.first == "session/cancel" }, "nothing was stopped")
+    }
+
+    @Test
+    fun aConnectionLostWhileAChatOpensDoesntCrashTheApp() = runBlocking {
+        // The tablet, 2026-11-27: a ping went unanswered on a weak link while a chat opened, and
+        // the request left waiting ended its job with ConnectionClosedException: a crash.
+        val c = connected { holdNewTab = true }
+        c.newAgentTab(codex, "/home/me/other")
+        c.waitFor("the starting tab") { s -> s.plasmaLlm?.tabs?.any { it.starting } == true }
+        assertTrue(host.requests.any { it.first == "session/new" }, "session/new is waiting for its answer")
+
+        host.lose("sent ping but didn't receive pong within 20000ms", SocketTimeoutException())
+        c.waitFor("the connection lost") { !it.isConnected && !it.startingSession }
+        delay(500) // the waiting job's end
+        assertEquals(emptyList(), crashes.map { "$it" })
     }
 
     @Test
@@ -291,6 +310,9 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
     fun addTab(tabId: String, agentId: String, sessionId: String, busy: Boolean = false) {
         tabs += Tab(tabId, agentId, sessionId, "/home/me/other", busy)
     }
+
+    /** The connection is lost, as when a ping gets no pong: the controller hears it, nothing is answered. */
+    fun lose(reason: String, error: Throwable?) = executor.execute { listener.onClosed(reason, error) }
 
     fun answerNewTab() = executor.execute { heldNewTab?.let { (id, tab) -> heldNewTab = null; startChat(id, tab) } }
 

@@ -30,6 +30,7 @@ import com.droidacp.core.tablet.TabletRelay
 import com.droidacp.core.tablet.TabletStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -844,7 +845,24 @@ class AgentController(
         val startNew: Boolean,
     ) : TransportListener, AcpClientHandler {
         private val job = SupervisorJob(appScope.coroutineContext[Job])
-        val scope = CoroutineScope(appScope.coroutineContext + job)
+
+        /**
+         * When the connection closes, every request still waiting fails with
+         * [ConnectionClosedException] (a ping without its pong, on a weak link). A job of this link
+         * that ends that way is expected: [onClosed] reconnects. Anything else is a bug, and goes
+         * on to the app's own handling, as before (on Android, a crash).
+         */
+        private val closedHandler = CoroutineExceptionHandler { context, e ->
+            if (e is ConnectionClosedException) return@CoroutineExceptionHandler
+            val app = appScope.coroutineContext[CoroutineExceptionHandler]
+            if (app != null) {
+                app.handleException(context, e)
+            } else {
+                val thread = Thread.currentThread()
+                thread.uncaughtExceptionHandler.uncaughtException(thread, e)
+            }
+        }
+        val scope = CoroutineScope(appScope.coroutineContext + job + closedHandler)
         val client = AcpClient(scope, { text -> transport.send(text) }, this, ::record)
         val transport: Transport = transports.create(profile, this)
 

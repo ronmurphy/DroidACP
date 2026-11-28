@@ -65,15 +65,21 @@ jobs:
       - name: Build release APK
         run: ./gradlew --no-daemon :app:assembleRelease
 
-      - name: Name the APK
+      # The R8 map decodes this build's crash stack traces (a4.e.a → JsonRpcConnection.close):
+      #   gunzip DroidACP-0.1.N-mapping.txt.gz
+      #   $ANDROID_HOME/cmdline-tools/latest/bin/retrace DroidACP-0.1.N-mapping.txt crash.txt
+      - name: Name the APK and its decoding map
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk "dist/DroidACP-0.1.${{ github.run_number }}.apk"
+          gzip -9 -c app/build/outputs/mapping/release/mapping.txt > "dist/DroidACP-0.1.${{ github.run_number }}-mapping.txt.gz"
 
       - uses: actions/upload-artifact@v4
         with:
           name: DroidACP-0.1.${{ github.run_number }}
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*-mapping.txt.gz
 
       # Only builds of the default branch become releases. Other branches are still
       # built and tested, and their APK is kept as a workflow artifact (above).
@@ -87,13 +93,16 @@ jobs:
           name: DroidACP 0.1.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ github.ref_name != github.event.repository.default_branch }}
-          files: dist/*.apk
+          files: |
+            dist/*.apk
+            dist/*-mapping.txt.gz
           body: |
             Built from `${{ github.ref_name }}` @ ${{ github.sha }}.
 
             **Install on Android:** tap the `.apk` below, then open it. The first time,
             Android asks you to allow installs from your browser.
             Newer builds install over older ones (same signing key).
+            The `-mapping.txt.gz` file isn't for installing: it decodes this build's crash reports.
 
             Builds from 25 November 2026 on are signed with a new, private key. If
             Android says the app can't be installed or isn't compatible, uninstall
