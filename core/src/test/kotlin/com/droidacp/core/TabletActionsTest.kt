@@ -41,6 +41,7 @@ class TabletActionsTest {
         assertEquals("Press Back", describe("key", """{"key": "back"}"""))
         assertEquals("Press Home", describe("key", """{"key": "home"}"""))
         assertEquals("Press Enter", describe("key", """{"key": "enter"}"""))
+        assertEquals("Minimise all windows", describe("key", """{"key": "minimise_all"}"""))
         assertEquals("Wait for “Sent”", describe("wait_for", """{"target": {"content_contains": "Sent"}}"""))
         assertEquals("Wait until “Sending…” is gone", describe("wait_for", """{"target": {"content_contains": "Sending…"}, "gone": true}"""))
     }

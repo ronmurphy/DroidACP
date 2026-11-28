@@ -74,6 +74,8 @@ object TabletActions {
         "back" -> "Press Back"
         "home" -> "Press Home"
         "enter" -> "Press Enter"
+        // TabDesk's Show desktop, only ever minimising (TabDesk's tool list 4).
+        "minimise_all" -> "Minimise all windows"
         else -> "Press a key"
     }
 
