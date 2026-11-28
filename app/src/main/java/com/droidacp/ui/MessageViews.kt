@@ -128,7 +128,7 @@ fun AgentImage(image: ContentBlock.Image) {
                 .clip(RoundedCornerShape(10.dp))
                 .clickable(onClickLabel = "Open full screen to zoom in") { open = true },
         )
-        if (open) ImageViewer(bitmap, "Image", onDismiss = { open = false })
+        if (open) ImageViewer(bitmap, "Image", source = image, onDismiss = { open = false })
     }
 }
 
