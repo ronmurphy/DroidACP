@@ -608,7 +608,7 @@ Roughly in order of value:
 | Picking a transport per agent | `app/.../DroidAcpApp.kt` (`transportFactory`) |
 | The add/edit agent form | `app/.../ui/ProfilesScreen.kt`, `FolderPicker.kt` |
 | The message box, 🛑 and the context bar | `app/.../ui/Composer.kt` |
-| Pictures full screen, zoomable | `app/.../ui/ImageViewer.kt` |
+| Pictures full screen, zoomable; Save and Share | `app/.../ui/ImageViewer.kt`, `PictureActions.kt`, `core/.../chat/PictureFile.kt` |
 | The Pixel People | `core/.../people/` and `sprites.txt`, `app/.../ui/PeopleStrip.kt`, `tools/pixelpeople/preview.py` (see `docs/PIXEL-PEOPLE.md`) |
 | Colours and typography | `app/.../ui/Theme.kt`, `app/src/main/res/values/colors.xml` |
 | The bridge | `bridge/acp-bridge.js`, `bridge/README.md` |

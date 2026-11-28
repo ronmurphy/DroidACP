@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A chat's picture shared with another app waits here (PictureActions.share). -->
+<paths>
+    <cache-path name="pictures" path="shared-pictures/" />
+</paths>

@@ -276,7 +276,8 @@ TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
   chat you're in is highlighted, and the strip hides while you type. See
   [docs/PIXEL-PEOPLE.md](docs/PIXEL-PEOPLE.md)
 - **Pictures** in the chat (screenshots, the tablet's camera) open full screen with a tap:
-  pinch or double-tap to zoom, drag to look around
+  pinch or double-tap to zoom, drag to look around. *Save* puts one in Pictures/DroidACP (Android 10 and
+  later), and *Share* offers it to other apps (Photos, Files, a message), as the agent sent it
 - **Slash commands**: type `/` to see what the agent offers
 - **Images**: attach photos or screenshots when the agent supports them
 - **Managing saved agents**: each agent's ⋮ menu has *Edit*, *Copy and edit* (a new agent with the same settings, e.g. to point it at another folder; the original stays as it is) and *Delete* (asks first; only the saved settings go, not files or conversations)
