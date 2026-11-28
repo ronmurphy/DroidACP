@@ -1,5 +1,6 @@
 package com.droidacp.core
 
+import com.droidacp.core.acp.Implementation
 import com.droidacp.core.acp.PlasmaAgent
 import com.droidacp.core.acp.PlasmaChat
 import com.droidacp.core.acp.PlasmaHello
@@ -124,7 +125,7 @@ class OtherAgentsTest {
         val s = c.waitFor("Codex's chat") { it.sessionId == "codex-1" && !it.startingSession }
         assertNull(s.startingAgent)
         assertEquals("codex-acp", s.frontAgentId)
-        assertEquals("Codex", s.chatAgentName)
+        assertEquals("Codex", s.agentName)
         assertFalse(s.busy, "Claude's turn goes on in its own tab, not here")
         assertTrue(s.otherTabs.single().busy, "…and it's still working there")
         assertTrue(host.requests.none { it.first == "session/cancel" }, "nothing was stopped")
@@ -223,6 +224,38 @@ class OtherAgentsTest {
         // The agent is kept with the bookmark; one saved before has none.
         val back = ChatBookmarks.fromJson(ChatBookmarks.toJson(listOf(codexChat, old)))
         assertEquals(listOf("codex-acp", null), back.map { it.agentId })
+    }
+
+    @Test
+    fun aChatIsNamedAfterItsTabsAgentNotWhoeverWasInFrontAtConnect() {
+        // PlasmaLLM's initialize names the agent in front then: here Codex's tab, before
+        // the user went back to Claude's (seen on a phone on 2026-11-27: "Message Codex…").
+        val claude = PlasmaTab("chat-a", "/p", null, busy = false, front = true, agentName = "@agentclientprotocol/claude-agent-acp",
+            agentTitle = "Claude Agent", agentId = PlasmaLlm.CLAUDE, tabId = "t1")
+        val codex = PlasmaTab("codex-1", "/q", null, busy = false, front = false, agentName = "codex-acp", agentTitle = "Codex",
+            agentId = "codex-acp", tabId = "t2")
+        val s = ChatState(
+            status = ConnectionStatus.Connected,
+            sessionId = "chat-a",
+            agent = Implementation("codex-acp", "Codex", "0.9.1"),
+            plasmaLlm = PlasmaHello(15, null, PlasmaChat("chat-a", "/p", null, false), tabs = listOf(claude, codex)),
+        )
+        assertEquals("Claude Agent", s.agentName)
+        assertNull(s.agentVersion, "Codex's version isn't Claude's")
+
+        val inCodexTab = s.copy(sessionId = "codex-1")
+        assertEquals("Codex", inCodexTab.agentName)
+        assertEquals("0.9.1", inCodexTab.agentVersion)
+
+        // While the chat isn't listed yet, the tab in front; with the list fetched, its version.
+        val listed = s.copy(sessionId = null, plasmaAgents = listOf(PlasmaAgent(PlasmaLlm.CLAUDE, "Claude", "default", ready = true, isDefault = true, version = "1.2.0")))
+        assertEquals("Claude Agent", listed.agentName)
+        assertEquals("1.2.0", listed.agentVersion)
+
+        // Before protocol 15, the agent from initialize, as before.
+        val old = s.copy(plasmaLlm = s.plasmaLlm!!.copy(protocol = 14))
+        assertEquals("Codex", old.agentName)
+        assertEquals("0.9.1", old.agentVersion)
     }
 }
 
