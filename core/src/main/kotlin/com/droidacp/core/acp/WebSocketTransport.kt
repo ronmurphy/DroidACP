@@ -6,6 +6,9 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -27,6 +30,22 @@ class WebSocketTransport(
     private var socket: WebSocket? = null
     private val finished = AtomicBoolean(false)
 
+    /**
+     * The listener hears everything here, in order, not on OkHttp's reading thread: that thread
+     * also reads the other end's pongs. A long chat's replay could keep a slow tablet busy there
+     * past the 20 s OkHttp waits for a pong, which then ended the connection ("sent ping but
+     * didn't receive pong"), and the next one replayed the chat from the top again (2026-11-27).
+     */
+    private val inbox: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "acp-inbox").apply { isDaemon = true } }
+
+    private fun deliver(event: () -> Unit) {
+        try {
+            inbox.execute(event)
+        } catch (e: RejectedExecutionException) {
+            // Closed: nothing more is heard.
+        }
+    }
+
     override fun connect() {
         val request = try {
             Request.Builder().url(url).apply {
@@ -41,15 +60,18 @@ class WebSocketTransport(
             request,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    listener.onOpen()
+                    deliver { listener.onOpen() }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (!finished.get()) listener.onMessage(text)
+                    if (!finished.get()) deliver { listener.onMessage(text) }
                 }
 
                 override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                    if (!finished.get()) listener.onMessage(bytes.utf8())
+                    if (!finished.get()) {
+                        val text = bytes.utf8()
+                        deliver { listener.onMessage(text) }
+                    }
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -87,8 +109,11 @@ class WebSocketTransport(
         finish("Disconnected", null)
     }
 
+    /** The end, heard after every message that came before it; then the inbox's thread ends. */
     private fun finish(reason: String, error: Throwable?) {
-        if (finished.compareAndSet(false, true)) listener.onClosed(reason, error)
+        if (!finished.compareAndSet(false, true)) return
+        deliver { listener.onClosed(reason, error) }
+        inbox.shutdown()
     }
 
     private fun describeClose(code: Int, reason: String): String = when {

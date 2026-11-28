@@ -26,4 +26,6 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
+    // A real WebSocket server for WebSocketTransportTest (pings, a slow listener).
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
