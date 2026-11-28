@@ -228,6 +228,19 @@ reconnect. A list over 256 KB (`too_big`), one that couldn't be read
 (`unreadable`) and a folder PlasmaLLM won't open (`no_folder`) each say so.
 Ticking items is for a later protocol.
 
+PlasmaLLM 19 has the people strip's break room (`offersBreak`). Each of `tabs`
+may say `onBreak` (`PlasmaTab.onBreak`, then `StripPerson.onBreak`), and
+`PeopleStrip` shows those people in the room at the strip's end (the `room`
+pose in sprites.txt) instead of on the strip. The long press's menu offers
+"Take a break", and the room's list brings one back, both through
+`AgentController.setBreak`, which sends `_plasmallm/break {tabId, onBreak}`.
+Nothing changes on the phone until PlasmaLLM's next state, which it sends every
+device, so all of them and its window agree. PlasmaLLM keeps breaks across its
+restarts and brings a person back by itself when its tab asks for approval or
+comes to the front. A break only moves the person: its agent goes on working,
+with a spinner in the room's list. Errors (`no_tab`, `unsupported` in
+PlasmaLLM's widget) come up as a toast.
+
 PlasmaLLM 5 passes on turns from outside it, for a chat with Remote Control
 on: a message typed in the Claude app, or a turn Claude starts by itself. They
 come as any turn sent from elsewhere (`started`, maybe no prompt chunk, the
