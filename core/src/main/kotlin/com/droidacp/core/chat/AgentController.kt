@@ -514,6 +514,29 @@ class AgentController(
     }
 
     /**
+     * Send PlasmaLLM's tab [tabId]'s person to the break room, or bring it back ([onBreak]
+     * false), protocol 19. The strip changes when PlasmaLLM sends the new state, which it sends
+     * every device. Null when done, else why not, in words for the user.
+     */
+    suspend fun setBreak(tabId: String, onBreak: Boolean): String? {
+        val l = link ?: return "DroidACP isn't connected to PlasmaLLM."
+        if (!l.plasma || !_state.value.offersBreak) return "This PlasmaLLM has no break room yet. Update PlasmaLLM on the computer."
+        return try {
+            l.client.setBreak(tabId, onBreak)
+            null
+        } catch (e: RpcException) {
+            when (e.plasmaReason) {
+                PlasmaLlm.Reason.NO_TAB -> "That tab isn't open any more."
+                PlasmaLlm.Reason.UNSUPPORTED -> "This PlasmaLLM window has no break room."
+                else -> e.message ?: "PlasmaLLM didn't change the break room."
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            "PlasmaLLM didn't answer: ${e.message}"
+        }
+    }
+
+    /**
      * Whether [sessionId] is still in the agent's list for [cwd], checked before a
      * bookmark opens: a chat that's gone makes PlasmaLLM start a new one on the computer,
      * closing the one open there. Null when it couldn't be checked (the agent can't list

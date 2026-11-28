@@ -253,6 +253,7 @@ class MainActivity : ComponentActivity() {
                 override suspend fun closeTab(tabId: String, force: Boolean) = controller.closeTab(tabId, force)
 
                 override suspend fun showTab(tabId: String) = controller.showTab(tabId)
+                override suspend fun setBreak(tabId: String, onBreak: Boolean) = controller.setBreak(tabId, onBreak)
 
                 override fun removeBookmark(sessionId: String) {
                     val profileId = controller.state.value.profile?.id ?: return

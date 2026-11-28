@@ -37,9 +37,11 @@ object PlasmaLlm {
      * other agents than Claude, one per tab: the list ([PlasmaAgent]), a new tab with one
      * ([newTabMeta]), `show_tab` and `close_tab`, and each tab's `agentId` and `tabId` ([AGENTS]);
      * 16, a tool's pictures in its content, which needed nothing here; 17, a project folder's
-     * to-do list, read only ([TODO]).
+     * to-do list, read only ([TODO]); 18, pictures on the laptop sent as pictures, which needed
+     * nothing here either; 19, the break room: each tab's `onBreak`, set with [BREAK_METHOD]
+     * ([BREAK]).
      */
-    const val PROTOCOL = 17
+    const val PROTOCOL = 19
 
     /** PlasmaLLM takes a tablet from a companion (protocol 2): `mcp/message` and the rest. */
     const val TABLET_PROTOCOL = 2
@@ -71,6 +73,16 @@ object PlasmaLlm {
     const val TODO = 17
     const val TODO_METHOD = "_plasmallm/todo"
     const val TODO_CHANGED = "_plasmallm/todo_changed"
+
+    /**
+     * The break room at the end of the people strip (protocol 19): a tab's `onBreak` says its
+     * person is in there, and [BREAK_METHOD] `{tabId, onBreak}` sends it there or back. Only
+     * where the person is shown: its agent goes on working. PlasmaLLM keeps it across restarts,
+     * brings a tab back by itself when it asks for approval or comes to the front, and sends
+     * every device a new state after each change.
+     */
+    const val BREAK = 19
+    const val BREAK_METHOD = "_plasmallm/break"
     const val SHOW_TAB = "_plasmallm/show_tab"
     const val CLOSE_TAB = "_plasmallm/close_tab"
 
@@ -142,7 +154,7 @@ object PlasmaLlm {
         /** The Plasma widget, which has no tabs. */
         const val UNSUPPORTED = "unsupported"
 
-        /** `show_tab` or `close_tab` with a `tabId` no tab has. */
+        /** `show_tab`, `close_tab` or `break` with a `tabId` no tab has. */
         const val NO_TAB = "no_tab"
 
         /** `close_tab` of the window's last tab, which stays open. */
@@ -338,6 +350,8 @@ data class PlasmaTab(
      * agent that takes no HTTP MCP servers, and while the laptop's tablet setting is off.
      */
     val tabletTools: Boolean? = null,
+    /** Its person is in the break room (protocol 19); false before. */
+    val onBreak: Boolean = false,
 ) {
     /** It's opening its agent and has no chat yet (protocol 15: `activity: "starting"`). */
     val starting: Boolean get() = sessionId.isEmpty() && activity == "starting"
@@ -370,6 +384,7 @@ data class PlasmaTab(
                     agentId = it.str("agentId")?.takeIf { t -> t.isNotBlank() },
                     tabId = it.str("tabId")?.takeIf { t -> t.isNotBlank() },
                     tabletTools = it.bool("tabletTools"),
+                    onBreak = it.bool("onBreak") ?: false,
                 )
             }
         }

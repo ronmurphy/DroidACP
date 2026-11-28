@@ -285,7 +285,7 @@ class OtherAgentsTest {
  * and `_plasmallm/state` naming the front tab's chat with every tab's `agentId` and `tabId`.
  */
 class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
-    private class Tab(val tabId: String, val agentId: String, var sessionId: String, val cwd: String, var busy: Boolean = false, var activity: String? = null)
+    private class Tab(val tabId: String, val agentId: String, var sessionId: String, val cwd: String, var busy: Boolean = false, var activity: String? = null, var onBreak: Boolean = false)
 
     private val executor = Executors.newSingleThreadExecutor()
     val requests = CopyOnWriteArrayList<Pair<String, JsonObject>>()
@@ -299,7 +299,7 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
     @Volatile
     var newTabFails: String? = null
 
-    /** The companion protocol it speaks: 15, or 17 with the to-do list. */
+    /** The companion protocol it speaks: 15, 17 with the to-do list, 19 with the break room. */
     @Volatile
     var protocol = 15
 
@@ -329,6 +329,12 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
 
     fun addTab(tabId: String, agentId: String, sessionId: String, busy: Boolean = false) {
         tabs += Tab(tabId, agentId, sessionId, "/home/me/other", busy)
+    }
+
+    /** PlasmaLLM changes a tab's break itself (its window, or the tab asking for approval) and says so. */
+    fun breakChanged(tabId: String, onBreak: Boolean) = executor.execute {
+        tabs.first { it.tabId == tabId }.onBreak = onBreak
+        state()
     }
 
     /** The connection is lost, as when a ping gets no pong: the controller hears it, nothing is answered. */
@@ -451,6 +457,19 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
                     put("markdown", "")
                 })
             }
+            PlasmaLlm.BREAK_METHOD -> {
+                val tab = tabs.firstOrNull { it.tabId == params.str("tabId") }
+                val onBreak = params.bool("onBreak")
+                when {
+                    params.str("tabId") == null || onBreak == null -> error(id, -32602, "break needs tabId and onBreak.", "invalid_params")
+                    tab == null -> error(id, -32602, "Plasma LLM has no such tab now.", "no_tab")
+                    else -> {
+                        tab.onBreak = onBreak
+                        reply(id, JsonObject(emptyMap()))
+                        state()
+                    }
+                }
+            }
             PlasmaLlm.SHOW_TAB -> {
                 val tab = tabs.firstOrNull { it.tabId == params.str("tabId") }
                 if (tab == null) return error(id, -32602, "Plasma LLM has no such tab now.", "no_tab")
@@ -505,6 +524,7 @@ class FakeTabbedPlasma(private val listener: TransportListener) : Transport {
                 put("tabId", t.tabId)
                 put("tabletTools", t.agentId == PlasmaLlm.CLAUDE && t.sessionId.isNotEmpty())
                 t.activity?.let { put("activity", it) }
+                if (t.onBreak) put("onBreak", true)
             })
         }
     }

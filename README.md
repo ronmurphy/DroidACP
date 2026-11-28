@@ -273,8 +273,12 @@ TabDesk's side is its `docs/agent-control.md`. DroidACP's side is
   its own look, shirt included; the bar under its feet is its agent's colours (Claude's
   orange, Gemini's four colours, ...). **Tap** a person to open its
   chat (that never stops anyone's work), **long press** for its name and what it's doing. The
-  chat you're in is highlighted, and the strip hides while you type. See
-  [docs/PIXEL-PEOPLE.md](docs/PIXEL-PEOPLE.md)
+  chat you're in is highlighted, and the strip hides while you type. With PlasmaLLM's
+  **break room** (protocol 19), the long press also offers *Take a break*: the person moves to
+  the couch at the strip's end, so a full strip stays tidy, while its agent goes on working.
+  Tap the room to see who's in it, and tap one to bring it back. It comes back by itself when
+  it needs your OK or its chat is opened, and the phone, the tablet and PlasmaLLM's window
+  all show the same room. See [docs/PIXEL-PEOPLE.md](docs/PIXEL-PEOPLE.md)
 - **Pictures** in the chat (screenshots, the tablet's camera) open full screen with a tap:
   pinch or double-tap to zoom, drag to look around. *Save* puts one in Pictures/DroidACP (Android 10 and
   later), and *Share* offers it to other apps (Photos, Files, a message), as the agent sent it

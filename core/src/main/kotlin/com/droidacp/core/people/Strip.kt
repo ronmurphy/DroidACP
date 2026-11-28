@@ -18,6 +18,12 @@ data class StripPerson(
     val front: Boolean,
     /** What it's doing in a few words (a tool's title, say), when known. */
     val detail: String? = null,
+    /** Its PlasmaLLM tab, for the break room (protocol 15's `tabId`). */
+    val tabId: String? = null,
+    /** In the break room (protocol 19) rather than on the strip. */
+    val onBreak: Boolean = false,
+    /** Its agent is in a turn. */
+    val busy: Boolean = false,
 ) {
     val pose: String get() = Activity.poseFor(activity)
 
@@ -35,7 +41,9 @@ data class StripPerson(
  * more. The chat on screen's pose comes from DroidACP's own view of it; the others' from
  * PlasmaLLM's `activity` (protocol 9), else working or idle. Until a tab says which agent it
  * runs, it's taken to be the same as this chat's. Its look is the one its agent chose
- * (protocol 10's `person`), else a default that stays the same for its folder.
+ * (protocol 10's `person`), else a default that stays the same for its folder. Those on a
+ * break (protocol 19) are in the list too, with [StripPerson.onBreak]: the strip shows the rest,
+ * and the break room at its end these.
  */
 fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<StripPerson> {
     val tabs = plasmaLlm?.tabs?.filter { it.sessionId.isNotEmpty() } ?: return emptyList()
@@ -63,6 +71,9 @@ fun ChatState.stripPeople(people: PixelPeople = PixelPeople.default): List<Strip
             },
             front = isThis,
             detail = if (isThis) runningTool() else tab.detail,
+            tabId = tab.tabId,
+            onBreak = offersBreak && tab.onBreak,
+            busy = if (isThis) busy else tab.busy,
         )
     }
 }

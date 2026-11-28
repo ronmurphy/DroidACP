@@ -155,6 +155,17 @@ class AcpClient(
         return TodoList.parse(result as? JsonObject ?: JsonObject(emptyMap()), cwd)
     }
 
+    /** Send PlasmaLLM's tab [tabId]'s person to the break room, or back ([onBreak] false), protocol 19. */
+    suspend fun setBreak(tabId: String, onBreak: Boolean) {
+        rpc.request(
+            PlasmaLlm.BREAK_METHOD,
+            buildJsonObject {
+                put("tabId", tabId)
+                put("onBreak", onBreak)
+            },
+        )
+    }
+
     /** Close PlasmaLLM's tab [tabId] (protocol 15); [force] also while its agent works, cutting the turn. */
     suspend fun closeTab(tabId: String, force: Boolean = false) {
         rpc.request(

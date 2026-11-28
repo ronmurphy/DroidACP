@@ -127,6 +127,9 @@ interface ChatActions {
     /** Bring PlasmaLLM's tab [tabId] to the front. Null when done, else why not. */
     suspend fun showTab(tabId: String): String?
 
+    /** Send tab [tabId]'s person to the break room, or back (protocol 19). Null when done, else why not. */
+    suspend fun setBreak(tabId: String, onBreak: Boolean): String?
+
     /** Show [cwd]'s to-do list (protocol 17; null: the open chat's folder), into [ChatState.todo]. */
     fun openTodo(cwd: String?)
     fun refreshTodo()
@@ -281,7 +284,12 @@ fun ChatScreen(
             Column {
                 // The Pixel People: one per PlasmaLLM tab. Out of the way while typing.
                 if (!keyboardTakesRoom()) {
-                    PeopleStrip(state.stripPeople()) { person -> switchChat(person.sessionId) { actions.openChat(person.sessionId, person.cwd) } }
+                    PeopleStrip(
+                        people = state.stripPeople(),
+                        breakRoom = state.offersBreak,
+                        onOpen = { person -> switchChat(person.sessionId) { actions.openChat(person.sessionId, person.cwd) } },
+                        onBreak = actions::setBreak,
+                    )
                 }
                 Composer(
                 state = state,

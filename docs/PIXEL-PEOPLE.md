@@ -13,7 +13,15 @@ tapping an agent swaps to its chat."
 - **Tap** a person: opens that tab's chat. A chat another tab has only brings its tab to
   the front, so nothing stops, and no "Stop the agent's work?" question.
 - **Long press:** a floating label with the tab's name, the agent and what it's doing, for
-  a few seconds. TalkBack reads the same: "plasmaLLM (Claude): reading files".
+  a few seconds. TalkBack reads the same: "plasmaLLM (Claude): reading files". With
+  PlasmaLLM's break room (protocol 19), it's a menu instead: the same name and doing, and
+  *Take a break*.
+- **The break room** (protocol 19): a couch at the strip's end (the `room` pose: `head none`
+  and a grid of its own), with how many are on it. Those on a break sit there instead of on
+  the strip, while their agents go on working. A tap lists them, each in its pose, with a
+  spinner when its agent works; tapping one brings it back. PlasmaLLM keeps who's on a break,
+  so the phone, the tablet and its window agree, and brings one back by itself when its tab
+  asks for approval or comes to the front.
 - **The chat you're in** is highlighted. Its pose comes from what DroidACP sees of the
   chat itself (`ChatState.activity` in `core/.../people/Activity.kt`). The other tabs' poses
   come from PlasmaLLM's per-tab `activity` (protocol 9); before that, it's working or idle.

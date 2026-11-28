@@ -223,6 +223,9 @@ data class ChatState(
     /** PlasmaLLM shows a project's to-do list (protocol 17). */
     val offersTodo: Boolean get() = isConnected && (plasmaLlm?.protocol ?: 0) >= PlasmaLlm.TODO
 
+    /** PlasmaLLM has the people strip's break room (protocol 19). */
+    val offersBreak: Boolean get() = isConnected && (plasmaLlm?.protocol ?: 0) >= PlasmaLlm.BREAK
+
     /** [approvalElsewhere] as shown: only during a turn, so one left over never shows after it. */
     val waitingElsewhere: Set<String> get() = if (busy) approvalElsewhere else emptySet()
 
