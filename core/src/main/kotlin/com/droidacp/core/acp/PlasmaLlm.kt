@@ -153,6 +153,9 @@ object PlasmaLlm {
 
         /** A to-do list over PlasmaLLM's cap for devices (256 KB), protocol 17. */
         const val TOO_BIG = "too_big"
+
+        /** A TASKLIST.md that's there but couldn't be read, protocol 17. */
+        const val UNREADABLE = "unreadable"
     }
 
     /**

@@ -422,7 +422,12 @@ class AgentController(
             try {
                 todoRead(folder, l.client.todo(folder.ifEmpty { null }), null)
             } catch (e: RpcException) {
-                val why = if (e.plasmaReason == PlasmaLlm.Reason.TOO_BIG) "This to-do list is too big to show here (over 256 KB)." else e.message
+                val why = when (e.plasmaReason) {
+                    PlasmaLlm.Reason.TOO_BIG -> "This to-do list is too big to show here (over 256 KB)."
+                    PlasmaLlm.Reason.UNREADABLE -> "This folder has a to-do list, but PlasmaLLM couldn't read it."
+                    PlasmaLlm.Reason.NO_FOLDER -> "PlasmaLLM can't open this folder: it isn't there, or isn't one it allows."
+                    else -> e.message
+                }
                 todoRead(folder, null, why ?: "PlasmaLLM couldn't read the to-do list.")
             } catch (e: Exception) {
                 if (e is CancellationException) throw e

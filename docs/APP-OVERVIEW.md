@@ -224,8 +224,9 @@ the rest its notes, shown on a tap). Open items show first, with headings left
 empty hidden. "Done" shows the rest, and "The file" shows the Markdown as it
 is. Read only. While the sheet is open, `_plasmallm/todo_changed {cwd}` for
 its folder reads it again (`AgentController.refreshTodo`), as does a
-reconnect. A list over 256 KB is refused (`too_big`) and said so. Ticking
-items is for a later protocol.
+reconnect. A list over 256 KB (`too_big`), one that couldn't be read
+(`unreadable`) and a folder PlasmaLLM won't open (`no_folder`) each say so.
+Ticking items is for a later protocol.
 
 PlasmaLLM 5 passes on turns from outside it, for a chat with Remote Control
 on: a message typed in the Claude app, or a turn Claude starts by itself. They

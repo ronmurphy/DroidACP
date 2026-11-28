@@ -145,6 +145,12 @@ class TodoListTest {
         assertEquals("This to-do list is too big to show here (over 256 KB).", failed.todo!!.error)
         assertNull(failed.todo!!.list)
 
+        // The file is there but couldn't be read: said so, read again on refresh.
+        host.todoError = PlasmaLlm.Reason.UNREADABLE
+        c.refreshTodo()
+        val unreadable = c.waitFor("the second error") { it.todo?.error?.contains("couldn't read it") == true }
+        assertEquals("This folder has a to-do list, but PlasmaLLM couldn't read it.", unreadable.todo!!.error)
+
         val old = connected(protocol = 15)
         assertFalse(old.state.value.offersTodo)
         old.openTodo(null)
